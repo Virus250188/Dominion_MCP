@@ -1,0 +1,1221 @@
+// ─── Patterns & Best Practices Module ──────────────────────────────────────
+// Code patterns, anti-patterns, and implementation guidelines for Enhanced Apps.
+// Served to AI agents via MCP tools to guide correct plugin implementation.
+// ────────────────────────────────────────────────────────────────────────────
+
+export const PATTERNS = {
+  pluginStructure: `
+# Plugin-Struktur (AppPlugin Interface)
+
+## Vollstaendiges Interface
+
+\`\`\`typescript
+import type { AppPlugin, PluginConfig, PluginStats } from "../../types";
+import { getVisibleStats, normalizeUrl, createErrorResponse, createFetchOptions } from "../../utils";
+
+export const meinPlugin: AppPlugin = {
+  metadata: {
+    id: string,           // lowercase, z.B. "truenas", "emby"
+    name: string,         // Anzeigename, z.B. "TrueNAS", "Emby"
+    icon: string,         // simple-icons Slug, z.B. "Truenas", "Emby"
+    color: string,        // Hex-Farbe, z.B. "#0095d5" (MUSS #XXXXXX Format)
+    description: string,  // Kurzbeschreibung auf Deutsch
+    category: PluginCategory,  // "Storage" | "Media" | "Network" | "Automation" |
+                               // "System" | "Monitoring" | "Downloads" | "Security" |
+                               // "Productivity" | "Development" | "Custom"
+    website?: string,     // Optionale URL zur offiziellen Website
+  },
+
+  configFields: ConfigField[],     // Formularfelder fuer die Konfiguration
+  statOptions: StatOption[],       // Waehlbare Statistiken
+  supportedSizes: TileSize[],      // Mindestens ["1x1"]
+  renderHints: Partial<Record<TileSize, SizeRenderHint>>,
+
+  // Pflicht-Funktionen:
+  async fetchStats(config: PluginConfig): Promise<PluginStats> { ... },
+  async testConnection(config: PluginConfig): Promise<{ ok: boolean; message: string }> { ... },
+
+  // Optional:
+  async crawlEntities?(config: PluginConfig): Promise<{ groups: CrawlEntityGroup[] }> { ... },
+};
+\`\`\`
+
+## Typ-Definitionen
+
+### PluginMetadata
+\`\`\`typescript
+interface PluginMetadata {
+  id: string;            // Plugin-ID (kebab-case, muss Registry-weit eindeutig sein)
+  name: string;          // Anzeigename (wird im TileDialog und Katalog gezeigt)
+  icon: string;          // simple-icons Slug mit Grossbuchstabe (z.B. "Truenas")
+  color: string;         // Hex-Farbe (#XXXXXX) - wird als App-Farbe verwendet
+  description: string;   // Kurzbeschreibung auf Deutsch (z.B. "Zeigt an: ...")
+  category: PluginCategory;  // Kategorie fuer die Sortierung im Katalog
+  website?: string;      // URL zur offiziellen Projekt-Website
+}
+\`\`\`
+
+### ConfigField
+\`\`\`typescript
+interface ConfigField {
+  key: string;          // Config-Key (z.B. "apiUrl", "apiKey", "accessToken")
+  label: string;        // Formular-Label auf Deutsch (z.B. "TrueNAS URL")
+  type: "text" | "password" | "url" | "textarea" | "select" | "number";
+  placeholder?: string; // Platzhaltertext (z.B. "http://truenas.local")
+  required?: boolean;   // Pflichtfeld? (apiUrl ist fast immer required)
+  description?: string; // Hilfetext auf Deutsch unter dem Feld
+  options?: { label: string; value: string }[];  // Nur fuer type: "select"
+  min?: number;         // Nur fuer type: "number"
+  max?: number;         // Nur fuer type: "number"
+}
+\`\`\`
+
+### StatOption
+\`\`\`typescript
+interface StatOption {
+  key: string;           // Interner Key (z.B. "usage", "streams", "uptime")
+  label: string;         // Label auf Deutsch (z.B. "Speicher-Belegung")
+  description: string;   // Beschreibung auf Deutsch (z.B. "Prozent des belegten Speichers")
+  defaultEnabled: boolean; // Standard-aktiviert? (true fuer die wichtigsten 2-3)
+}
+\`\`\`
+
+### SizeRenderHint
+\`\`\`typescript
+interface SizeRenderHint {
+  maxStats: number;           // Max Stats fuer diese Groesse (1x1: bis 3, 2x1/2x2: bis 6)
+  layout: "compact" | "detailed" | "widget";
+  widgetComponent?: string;   // Widget-Name (nur bei layout: "widget")
+}
+\`\`\`
+
+### CrawlEntityGroup (fuer crawlEntities)
+\`\`\`typescript
+interface CrawlEntityGroup {
+  domain: string;      // Gruppierungs-Key (z.B. "sensor", "light", "container")
+  label: string;       // Anzeige-Label auf Deutsch (z.B. "Sensoren", "Lichter")
+  icon: string;        // Lucide-Icon-Name (z.B. "Activity", "Lightbulb")
+  entities: Array<{
+    id: string;        // Eindeutige Entity-ID (z.B. "sensor.temperature_kitchen")
+    name: string;      // Anzeigename (z.B. "Kueche Temperatur")
+    state: string;     // Aktueller Status (z.B. "23.5", "on", "running")
+  }>;
+}
+\`\`\`
+`,
+
+  configFields: `
+# ConfigField Typen und Beispiele
+
+## Typ-Uebersicht
+
+| Typ        | HTML Element | Beispiel-Einsatz                      |
+|------------|-------------|---------------------------------------|
+| \`"url"\`    | Input URL   | Server-URL, API-Endpunkt              |
+| \`"password"\`| Input PW   | API Key, Access Token, Passwort       |
+| \`"text"\`   | Input Text  | Benutzername, benutzerdefinierte IDs  |
+| \`"textarea"\`| Textarea   | Mehrzeilige Entity-Listen (Legacy)    |
+| \`"select"\` | Select      | Dropdown-Auswahl (z.B. Protokoll)     |
+| \`"number"\` | Input Num   | Port, Intervall, Limits               |
+
+## Typische Muster
+
+### Muster 1: URL + API Key (am häufigsten)
+\`\`\`typescript
+configFields: [
+  {
+    key: "apiUrl",
+    label: "Server URL",
+    type: "url",
+    placeholder: "http://service.local:8080",
+    required: true,
+    description: "Die URL deiner Service-Instanz",
+  },
+  {
+    key: "apiKey",
+    label: "API Key",
+    type: "password",
+    required: true,
+    description: "Erstelle einen API Key unter Einstellungen → API Keys",
+  },
+],
+\`\`\`
+
+### Muster 2: URL + Access Token (z.B. Home Assistant)
+\`\`\`typescript
+configFields: [
+  {
+    key: "apiUrl",
+    label: "Home Assistant URL",
+    type: "url",
+    placeholder: "http://homeassistant.local:8123",
+    required: true,
+    description: "Die URL deiner Home Assistant Instanz",
+  },
+  {
+    key: "accessToken",
+    label: "Long-Lived Access Token",
+    type: "password",
+    required: true,
+    description: "Erstelle einen Token unter Profil → Langlebige Zugangstoken",
+  },
+],
+\`\`\`
+
+### Muster 3: URL + Username + Password (z.B. JDownloader)
+\`\`\`typescript
+configFields: [
+  {
+    key: "apiUrl",
+    label: "JDownloader URL",
+    type: "url",
+    placeholder: "http://jdownloader.local:3129",
+    required: true,
+    description: "Die URL deines JDownloader",
+  },
+  {
+    key: "username",
+    label: "Benutzername",
+    type: "text",
+    required: false,
+    description: "Optional: Benutzername fuer die Authentifizierung",
+  },
+  {
+    key: "password",
+    label: "Passwort",
+    type: "password",
+    required: false,
+    description: "Optional: Passwort fuer die Authentifizierung",
+  },
+],
+\`\`\`
+
+### Muster 4: Mit Select-Dropdown
+\`\`\`typescript
+configFields: [
+  // ... URL + Key
+  {
+    key: "protocol",
+    label: "Protokoll",
+    type: "select",
+    required: true,
+    options: [
+      { label: "HTTPS", value: "https" },
+      { label: "HTTP", value: "http" },
+    ],
+    description: "Verbindungsprotokoll zum Server",
+  },
+],
+\`\`\`
+
+## Regeln
+- **apiUrl ist fast immer das erste Feld** mit type: "url" und required: true
+- **Labels und Beschreibungen auf Deutsch**
+- **Hilfreiche Descriptions:** Sage dem User WO er den Key/Token findet
+- **Placeholders:** Zeige ein realistisches Beispiel der URL
+- **Reihenfolge:** URL zuerst, dann Authentifizierung, dann optionale Felder
+`,
+
+  statOptions: `
+# StatOption Pattern
+
+## Grundstruktur
+
+\`\`\`typescript
+statOptions: [
+  {
+    key: "usage",          // Interner Schluessel (in visibleStats Array)
+    label: "Speicher-Belegung",  // Anzeige-Label auf Deutsch
+    description: "Prozent des belegten Speichers",  // Hilfetext auf Deutsch
+    defaultEnabled: true,   // Standardmaessig aktiviert?
+  },
+  {
+    key: "free",
+    label: "Freier Speicher",
+    description: "Verbleibender freier Speicherplatz",
+    defaultEnabled: true,
+  },
+  {
+    key: "uptime",
+    label: "Uptime",
+    description: "System-Betriebszeit",
+    defaultEnabled: true,
+  },
+  {
+    key: "pools",
+    label: "Pool-Anzahl",
+    description: "Anzahl der Storage Pools",
+    defaultEnabled: false,  // Nicht standardmaessig sichtbar
+  },
+],
+\`\`\`
+
+## Regeln
+
+1. **defaultEnabled: true** fuer die wichtigsten 2-3 Stats
+2. **defaultEnabled: false** fuer optionale/sekundaere Stats
+3. **Labels auf Deutsch** - kurz und praegnant
+4. **Descriptions auf Deutsch** - erklaeren was der Stat zeigt
+5. **key muss in fetchStats verwendet werden** - via \`visibleStats.includes(key)\`
+6. **Max 6 statOptions empfohlen** - Validator schneidet bei 6 Items ab
+
+## Wie visibleStats in fetchStats funktioniert
+
+\`\`\`typescript
+import { getVisibleStats, normalizeUrl, createErrorResponse, createFetchOptions, formatBytes } from "../../utils";
+
+async fetchStats(config: PluginConfig): Promise<PluginStats> {
+  // Shared Utility: parst config.visibleStats (JSON-String oder Array) mit Fallback auf Defaults
+  const visibleStats = getVisibleStats(config, this.statOptions);
+
+  const items: StatItem[] = [];
+
+  // Nur Stats sammeln die der User aktiviert hat
+  if (visibleStats.includes("usage")) {
+    items.push({ label: "Belegt", value: \\\`\\\${usedPercent}%\\\`, color: "green" });
+  }
+  if (visibleStats.includes("free")) {
+    items.push({ label: "Frei", value: formatBytes(freeSpace) });
+  }
+
+  return { items, status: "ok" };
+}
+\`\`\`
+
+### PluginConfig Felder
+
+\`\`\`typescript
+interface PluginConfig {
+  apiUrl: string;
+  apiKey?: string;
+  accessToken?: string;
+  username?: string;
+  password?: string;
+  entityIds?: string;           // Legacy: Komma-/Newline-separierte Entity-IDs
+  visibleStats?: unknown;       // JSON-String ODER Array (backward compat)
+  selectedEntities?: unknown;   // JSON-String ODER Array (backward compat)
+  [key: string]: unknown;       // Weitere benutzerdefinierte Felder
+}
+\`\`\`
+
+### Shared Utilities (src/plugins/utils.ts)
+
+\`\`\`typescript
+// Visible Stats mit Fallback auf Defaults
+getVisibleStats(config: PluginConfig, statOptions: StatOption[]): string[]
+
+// URL normalisieren (trailing slash entfernen)
+normalizeUrl(url: string | unknown): string
+
+// Error-Response erstellen
+createErrorResponse(err: unknown): PluginStats  // { items: [], status: "error", error: message }
+
+// Fetch-Optionen mit AbortSignal.timeout und optionalen Headers
+createFetchOptions(timeout?: number, headers?: Record<string, string>): RequestInit
+
+// Bytes formatieren (z.B. 1536000 -> "1.5 MB")
+formatBytes(bytes: number): string
+
+// Uptime formatieren (z.B. 90000 -> "1d 1h")
+formatUptime(seconds: number): string
+\`\`\`
+`,
+
+  fetchStatsPattern: `
+# fetchStats Implementation Pattern
+
+## Komplettes Beispiel (orientiert an echtem TrueNAS Plugin)
+
+\`\`\`typescript
+import { getVisibleStats, normalizeUrl, createErrorResponse, createFetchOptions, formatBytes, formatUptime } from "../../utils";
+
+async fetchStats(config: PluginConfig): Promise<PluginStats> {
+  try {
+    // 1. Sichtbare Stats ermitteln (Shared Utility)
+    const visibleStats = getVisibleStats(config, this.statOptions);
+
+    // 2. Basis-URL normalisieren (Shared Utility)
+    const baseUrl = normalizeUrl(config.apiUrl);
+
+    // 3. Auth-Header vorbereiten
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+      Authorization: \\\`Bearer \\\${String(config.apiKey || "")}\\\`,
+    };
+
+    // 4. Mehrere Endpoints PARALLEL abfragen (Promise.all)
+    const [poolsRes, infoRes] = await Promise.all([
+      fetch(\\\`\\\${baseUrl}/api/v2.0/pool\\\`, { ...createFetchOptions(), headers }),
+      fetch(\\\`\\\${baseUrl}/api/v2.0/system/info\\\`, { ...createFetchOptions(), headers }),
+    ]);
+
+    // 5. HTTP-Status pruefen
+    if (!poolsRes.ok) throw new Error(\\\`Pools: HTTP \\\${poolsRes.status}\\\`);
+    if (!infoRes.ok) throw new Error(\\\`Info: HTTP \\\${infoRes.status}\\\`);
+
+    // 6. JSON parsen
+    const pools = await poolsRes.json();
+    const info = await infoRes.json();
+
+    // 7. Stats sammeln (NUR sichtbare, Reihenfolge = Prioritaet)
+    const items: StatItem[] = [];
+
+    if (visibleStats.includes("usage")) {
+      const usedPercent = Math.round((totalUsed / totalSize) * 100);
+      items.push({
+        label: "Belegt",
+        value: \\\`\\\${usedPercent}%\\\`,
+        color: usedPercent > 85 ? "red" : usedPercent > 70 ? "yellow" : "green",
+      });
+    }
+
+    if (visibleStats.includes("free")) {
+      items.push({
+        label: "Frei",
+        value: formatBytes(totalSize - totalUsed),
+      });
+    }
+
+    if (visibleStats.includes("uptime") && info.uptime_seconds) {
+      items.push({
+        label: "Uptime",
+        value: formatUptime(info.uptime_seconds),
+      });
+    }
+
+    // 8. Zurueckgeben (NICHT selbst slicen, Validator macht das)
+    return { items, status: "ok" };
+  } catch (err) {
+    // 9. NIEMALS eine Exception werfen! Shared Utility fuer Error-Response.
+    return createErrorResponse(err);
+  }
+}
+\`\`\`
+
+## Regeln (Zusammenfassung)
+
+1. **Immer try/catch** - fetchStats darf NIEMALS eine Exception werfen
+2. **Shared Utilities verwenden** - \`getVisibleStats\`, \`normalizeUrl\`, \`createFetchOptions\`, \`createErrorResponse\`
+3. **visibleStats respektieren** - Nur vom User aktivierte Stats sammeln
+4. **Promise.all() fuer parallele Requests** - Unabhaengige Endpoints parallel
+5. **Nicht selbst slicen** - Validator und StatsDisplay uebernehmen das
+6. **Reihenfolge = Prioritaet** - Wichtigste Stats zuerst im items Array
+7. **Config-Werte als String casten** - \`String(config.apiKey || "")\`
+
+## StatItem Rueckgabe
+
+\`\`\`typescript
+interface StatItem {
+  label: string;          // DEUTSCH! z.B. "Belegt", "Streams", "Uptime"
+  value: string | number; // z.B. "72%", 42, "3d 12h"
+  unit?: string;          // z.B. "GB", "%", "MB/s", "°C"
+  icon?: string;          // Lucide-Icon-Name z.B. "HardDrive", "Activity"
+  color?: string;         // "green" | "red" | "yellow" | "blue" | undefined
+}
+\`\`\`
+`,
+
+  testConnectionPattern: `
+# testConnection Implementation Pattern
+
+## Komplettes Beispiel
+
+\`\`\`typescript
+import { normalizeUrl, createFetchOptions } from "../../utils";
+
+async testConnection(
+  config: PluginConfig,
+): Promise<{ ok: boolean; message: string }> {
+  try {
+    const baseUrl = normalizeUrl(config.apiUrl);
+
+    const res = await fetch(\\\`\\\${baseUrl}/api/v2.0/system/info\\\`, {
+      ...createFetchOptions(),
+      headers: {
+        Authorization: \\\`Bearer \\\${String(config.apiKey || "")}\\\`,
+      },
+    });
+
+    if (!res.ok) {
+      // Deutsche Fehlermeldung mit HTTP-Status
+      return { ok: false, message: \\\`HTTP \\\${res.status}: Zugriff verweigert\\\` };
+    }
+
+    const info = await res.json();
+
+    // Erfolg: Zeige Service-Name oder Version
+    return {
+      ok: true,
+      message: \\\`Verbunden mit \\\${info.hostname || "TrueNAS"}\\\`,
+    };
+  } catch (err) {
+    return { ok: false, message: (err as Error).message };
+  }
+}
+\`\`\`
+
+## Regeln
+
+1. **try/catch** - Fehler abfangen und als \`{ ok: false, message }\` zurueckgeben
+2. **AbortSignal.timeout(5000)** - 5 Sekunden Timeout
+3. **Deutsche Fehlermeldungen:**
+   - \`"HTTP {status}: Zugriff verweigert"\` bei 401/403
+   - \`"HTTP {status}: Nicht gefunden"\` bei 404
+   - \`"Verbindung fehlgeschlagen"\` bei Netzwerkfehler
+4. **Erfolgs-Nachricht:** \`"Verbunden mit {ServiceName} (v{Version})"\`
+   - Zeige Service-Name, Hostname oder Version wenn verfuegbar
+   - Fallback: \`"Verbunden mit {PluginName}"\`
+5. **Leichtgewichtiger Endpoint** - Waehle einen schnellen API-Endpunkt fuer den Test
+   (z.B. /api/info, /system/status, nicht /api/all-data)
+
+## Typische Erfolgs-Nachrichten
+
+\`\`\`typescript
+// TrueNAS
+{ ok: true, message: "Verbunden mit truenas-server" }
+
+// Emby
+{ ok: true, message: "Verbunden mit MeinEmby (v4.8.0)" }
+
+// Home Assistant
+{ ok: true, message: "Verbunden mit Home Assistant (OK)" }
+
+// OPNsense
+{ ok: true, message: "Verbunden mit OPNsense (v24.7)" }
+\`\`\`
+
+## Typische Fehler-Nachrichten
+
+\`\`\`typescript
+{ ok: false, message: "HTTP 401: Zugriff verweigert" }
+{ ok: false, message: "HTTP 404: Nicht gefunden" }
+{ ok: false, message: "HTTP 500: Serverfehler" }
+{ ok: false, message: "fetch failed" }  // Netzwerkfehler
+{ ok: false, message: "The operation was aborted due to timeout" }  // Timeout
+\`\`\`
+`,
+
+  crawlEntitiesPattern: `
+# crawlEntities Pattern (Optional)
+
+## Wann implementieren?
+
+- Plugin hat waehlbare Datenquellen (z.B. HA-Sensoren, Docker-Container, Proxmox-VMs)
+- User soll im TileDialog auswaehlen koennen, welche Entities angezeigt werden
+
+## Wann NICHT implementieren?
+
+- Plugin hat feste Stats (z.B. TrueNAS: Pool-Belegung ist immer dieselbe)
+- Keine sinnvolle Entity-Auswahl moeglich
+
+## Komplettes Beispiel (orientiert an Home Assistant)
+
+\`\`\`typescript
+async crawlEntities(config: PluginConfig) {
+  const baseUrl = String(config.apiUrl || "").replace(/\\/$/, "");
+  const headers: HeadersInit = {
+    Authorization: \\\`Bearer \\\${String(config.accessToken || "")}\\\`,
+    "Content-Type": "application/json",
+  };
+
+  // Laengerer Timeout fuer Crawler (10s statt 5s, da mehr Daten)
+  const res = await fetch(\\\`\\\${baseUrl}/api/states\\\`, {
+    headers,
+    signal: AbortSignal.timeout(10000),
+  });
+  if (!res.ok) throw new Error(\\\`HTTP \\\${res.status}\\\`);
+
+  const states: HAState[] = await res.json();
+
+  // Gruppieren nach Domain/Typ
+  const domainMap = new Map<string, { id: string; name: string; state: string }[]>();
+  for (const entity of states) {
+    const domain = entity.entity_id.split(".")[0];
+    if (!domainMap.has(domain)) domainMap.set(domain, []);
+    domainMap.get(domain)!.push({
+      id: entity.entity_id,
+      name: entity.attributes?.friendly_name || entity.entity_id.split(".")[1],
+      state: entity.state,
+    });
+  }
+
+  // Gruppen mit deutschen Labels und Icons
+  const DOMAIN_LABELS: Record<string, { label: string; icon: string }> = {
+    sensor:        { label: "Sensoren",        icon: "Activity" },
+    binary_sensor: { label: "Binaer-Sensoren", icon: "ToggleRight" },
+    light:         { label: "Lichter",         icon: "Lightbulb" },
+    switch:        { label: "Schalter",        icon: "Power" },
+    climate:       { label: "Klima",           icon: "Thermometer" },
+    automation:    { label: "Automationen",    icon: "Zap" },
+  };
+
+  const groups = Array.from(domainMap.entries())
+    .map(([domain, entities]) => ({
+      domain,
+      label: DOMAIN_LABELS[domain]?.label || domain,
+      icon: DOMAIN_LABELS[domain]?.icon || "Activity",
+      entities: entities.sort((a, b) => a.name.localeCompare(b.name)),
+    }))
+    .filter((g) => g.entities.length > 0)
+    .sort((a, b) => a.label.localeCompare(b.label));
+
+  return { groups };
+}
+\`\`\`
+
+## Flow: Test -> Crawl -> Pick -> Save
+
+1. User gibt API-Credentials ein im TileDialog
+2. "Verbindung testen" ruft \`testConnection()\` auf
+3. Bei Erfolg: System ruft automatisch \`crawlEntities()\` auf
+4. Entity-Picker UI zeigt gruppierte Entities zum Auswaehlen
+5. User waehlt gewuenschte Entities
+6. Auswahl wird als \`selectedEntities\` JSON in der Config gespeichert
+
+## Dual-Format Support in fetchStats
+
+Plugins mit crawlEntities MUESSEN beide Formate in fetchStats lesen:
+
+\`\`\`typescript
+// Neues Format (vom Entity-Picker gespeichert)
+let entityEntries: { id: string; customLabel?: string }[] = [];
+if (config.selectedEntities) {
+  try {
+    const parsed = JSON.parse(String(config.selectedEntities));
+    if (Array.isArray(parsed)) {
+      entityEntries = parsed.map((e: { id: string; label?: string }) => ({
+        id: e.id,
+        customLabel: e.label,
+      }));
+    }
+  } catch { /* fall through to legacy */ }
+}
+
+// Legacy-Format (Textarea mit entity_id:Label pro Zeile)
+if (entityEntries.length === 0 && config.entityIds) {
+  entityEntries = String(config.entityIds)
+    .split(/[\\n,]/)
+    .map((entry) => entry.trim())
+    .filter(Boolean)
+    .map((entry) => {
+      const colonIdx = entry.indexOf(":");
+      if (colonIdx > 0) {
+        return {
+          id: entry.substring(0, colonIdx).trim(),
+          customLabel: entry.substring(colonIdx + 1).trim() || undefined,
+        };
+      }
+      return { id: entry };
+    });
+}
+\`\`\`
+
+## Regeln
+
+1. **AbortSignal.timeout(10000)** - 10s Timeout (mehr Daten als normaler Fetch)
+2. **Gruppieren nach Domain/Typ** - Sortierte Gruppen mit deutschen Labels
+3. **Lucide-Icons fuer Gruppen** - Passende Icons pro Domain waehlen
+4. **crawlEntities darf Exceptions werfen** - (anders als fetchStats!) System fängt ab
+5. **Entity-Namen alphabetisch sortieren** innerhalb jeder Gruppe
+`,
+
+  widgetPattern: `
+# Widget-Komponente Pattern
+
+## Dateistruktur
+
+\`\`\`
+src/components/widgets/
+  registry.ts                    # Zentrale Widget-Registry
+  shared/
+    WidgetHeader.tsx              # Gemeinsamer Widget-Header (40px, border-bottom)
+    CircularProgress.tsx          # Kreisfoermiger Fortschritt
+    SparklineChart.tsx            # Mini-Liniendiagramm
+    HorizontalProgressBar.tsx     # Horizontaler Balken
+    ControlButton.tsx             # Steuerungs-Button
+  {plugin-id}/
+    {Name}Widget.tsx              # Widget-Komponente
+\`\`\`
+
+## WidgetProps Interface
+
+\`\`\`typescript
+interface WidgetProps {
+  stats: EnhancedStats;                    // Aktuelle Stats (loading/error/ok)
+  config: Record<string, unknown>;         // Geparste Tile-Konfiguration
+  tileId: number;                          // ID des Tiles in der DB
+  size: "2x1" | "2x2";                    // Aktuelle Groesse des Tiles
+  onAction?: (action: string, payload?: unknown) => void;  // Optionale Widget-Actions
+}
+
+// EnhancedStats = PluginStats + "loading" Status
+interface EnhancedStats {
+  items: StatItem[];
+  status: "ok" | "error" | "loading";
+  error?: string;
+}
+\`\`\`
+
+## Komplettes Widget-Grundgeruest
+
+\`\`\`typescript
+"use client";
+
+import { cn } from "@/lib/utils";
+import type { WidgetProps } from "../registry";
+import { WidgetHeader } from "../shared/WidgetHeader";
+import { Loader2, AlertCircle } from "lucide-react";
+
+// ── Loading State ──────────────────────────────────────────────
+function WidgetLoading() {
+  return (
+    <div className="flex flex-col h-full">
+      <WidgetHeader
+        icon="LucideIconName"     // Passendes Lucide-Icon
+        iconColor="#hexcolor"     // metadata.color des Plugins
+        title="Plugin-Name"
+        status="unknown"
+      />
+      <div className="flex-1 flex items-center justify-center gap-2 text-muted-foreground">
+        <Loader2 className="h-5 w-5 animate-spin" />
+        <span className="text-sm">Laden...</span>
+      </div>
+    </div>
+  );
+}
+
+// ── Error State ────────────────────────────────────────────────
+function WidgetError({ error }: { error?: string }) {
+  return (
+    <div className="flex flex-col h-full">
+      <WidgetHeader
+        icon="LucideIconName"
+        iconColor="#hexcolor"
+        title="Plugin-Name"
+        status="offline"
+      />
+      <div className="flex-1 flex items-center justify-center gap-2 text-destructive">
+        <AlertCircle className="h-5 w-5" />
+        <span className="text-sm">{error || "Verbindungsfehler"}</span>
+      </div>
+    </div>
+  );
+}
+
+// ── 2x1 Variant ───────────────────────────────────────────────
+function MeinPlugin2x1({ stats }: WidgetProps) {
+  const items = stats.items.slice(0, 6);
+
+  return (
+    <div className="flex flex-col h-full">
+      <WidgetHeader
+        icon="LucideIconName"
+        iconColor="#hexcolor"
+        title="Plugin-Name"
+        status={stats.status === "ok" ? "online" : "offline"}
+      />
+      <div className="flex-1 p-2 min-h-0">
+        {/* 2x1 Content: ~92px verfuegbar */}
+        {/* z.B. kompakte Cards, Progress-Bars, Inline-Stats */}
+      </div>
+    </div>
+  );
+}
+
+// ── 2x2 Variant ───────────────────────────────────────────────
+function MeinPlugin2x2({ stats }: WidgetProps) {
+  const items = stats.items.slice(0, 6);
+
+  return (
+    <div className="flex flex-col h-full">
+      <WidgetHeader
+        icon="LucideIconName"
+        iconColor="#hexcolor"
+        title="Plugin-Name"
+        subtitle="Optionaler Untertitel"
+        status={stats.status === "ok" ? "online" : "offline"}
+      />
+      <div className="flex-1 p-3 min-h-0">
+        {/* 2x2 Content: ~250px verfuegbar */}
+        {/* z.B. Grid mit Entity-Cards, Charts, Listen */}
+      </div>
+    </div>
+  );
+}
+
+// ── Main Export (dispatches by state and size) ─────────────────
+export function MeinPluginWidget(props: WidgetProps) {
+  // PFLICHT: 3 States handlen
+  if (props.stats.status === "loading") return <WidgetLoading />;
+  if (props.stats.status === "error") return <WidgetError error={props.stats.error} />;
+
+  // Dispatch by size
+  if (props.size === "2x2") return <MeinPlugin2x2 {...props} />;
+  return <MeinPlugin2x1 {...props} />;
+}
+\`\`\`
+
+## WidgetHeader Props
+
+\`\`\`typescript
+interface WidgetHeaderProps {
+  icon?: string;          // Lucide-Icon-Name (z.B. "House", "HardDrive")
+  iconColor?: string;     // Hex-Farbe fuer das Icon
+  title: string;          // Widget-Titel
+  subtitle?: string;      // Optionaler Untertitel (rechts neben Titel)
+  status?: "online" | "offline" | "unknown";  // Status-Punkt (links)
+  children?: ReactNode;   // Rechte Seite (z.B. Action-Buttons)
+}
+\`\`\`
+
+## Widget-Registrierung
+
+### Fuer Community Plugins (empfohlen):
+
+In \`src/plugins/community/index.ts\` hinzufuegen:
+
+\`\`\`typescript
+export { MeinPluginWidget } from "./meinservice/MeinPluginWidget";
+
+export const communityWidgets: Record<string, ComponentType<unknown>> = {
+  "MeinPluginWidget": MeinPluginWidget,
+};
+\`\`\`
+
+Die Widget-Registry importiert \`communityWidgets\` automatisch und registriert alle Eintraege.
+
+### Fuer Builtin Plugins:
+
+In \`src/components/widgets/registry.ts\` hinzufuegen:
+
+\`\`\`typescript
+import { MeinPluginWidget } from "./{plugin-id}/MeinPluginWidget";
+registerWidget("MeinPluginWidget", MeinPluginWidget);
+\`\`\`
+
+Der Name muss EXAKT mit \`renderHints[size].widgetComponent\` uebereinstimmen.
+
+## Widget-Regeln
+
+1. **\`"use client"\` ist Pflicht** - Widgets sind Client-Komponenten
+2. **Alle 3 Zustaende behandeln:** loading -> Spinner, error -> Fehlermeldung, ok -> Inhalt
+3. **KEINE eigenen API-Calls** - Daten kommen ausschliesslich ueber stats Prop
+4. **Groessen-Varianten via size Prop** - 2x1 (kompakt) vs 2x2 (voll)
+5. **WidgetHeader fuer einheitliches Aussehen** verwenden
+6. **Widget-Name muss mit renderHints.widgetComponent uebereinstimmen**
+7. **Shared Components nutzen:** CircularProgress, SparklineChart, HorizontalProgressBar, ControlButton
+8. **Texte auf Deutsch** - "Laden...", "Verbindungsfehler", "Keine Daten"
+`,
+
+  registrationPattern: `
+# Registrierungs-Pattern: Wie ein neues Community Plugin registriert wird
+
+## NUR 1 Datei muss angepasst werden: \`src/plugins/community/index.ts\`
+
+### Schritt 1: Plugin-Ordner erstellen
+
+\`\`\`
+src/plugins/community/meinservice/index.ts
+\`\`\`
+
+### Schritt 2: Export + Array-Eintrag in community/index.ts
+
+\`\`\`typescript
+// ── Community plugin exports go here ──
+export { meinPlugin } from "./meinservice";
+
+// All community plugins collected for the registry.
+export const communityPlugins: AppPlugin[] = [
+  meinPlugin,  // <-- Neues Plugin
+];
+
+// Optional: Widget-Map (nur wenn Plugin ein Widget hat)
+export const communityWidgets: Record<string, ComponentType<unknown>> = {
+  "MeinServiceWidget": MeinServiceWidget,  // <-- Automatisch registriert
+};
+\`\`\`
+
+### Das war's! Keine weiteren Core-Dateien noetig.
+
+- **Kein \`registry.ts\` bearbeiten** - Community Plugins werden automatisch importiert
+- **Kein \`icons.ts\` bearbeiten** - Icons werden automatisch aus metadata.icon aufgeloest
+- **Kein \`widgets/registry.ts\` bearbeiten** - Community Widgets werden automatisch registriert
+
+## Validierung beim Start
+
+Nach der Registrierung prueft \`validatePlugin()\` automatisch:
+- metadata.id ist nicht-leerer String
+- metadata.name ist nicht-leerer String
+- metadata.color ist gueltiges Hex (#XXXXXX)
+- configFields ist ein Array
+- supportedSizes ist nicht-leeres Array mit gueltigen Groessen
+- fetchStats ist eine Funktion
+- testConnection ist eine Funktion
+
+Bei Fehler: Plugin wird NICHT registriert, Fehler in Console.
+Doppelte IDs werden erkannt und uebersprungen (Warnung in Console).
+`,
+
+  colorConventions: `
+# Farb-Konventionen fuer Stats
+
+## Uebersicht
+
+| Farbe      | CSS-Klasse       | Verwendung                                     |
+|------------|------------------|------------------------------------------------|
+| \`"green"\`  | text-emerald-400 | Positiv, aktiv, online, niedrige Auslastung    |
+| \`"red"\`    | text-red-400     | Negativ, kritisch, offline, hohe Auslastung    |
+| \`"yellow"\` | text-yellow-400  | Warnung, mittlere Auslastung                  |
+| \`"blue"\`   | text-sky-400     | Information, Temperatur, neutral-hervorgehoben |
+| \`undefined\`| text-foreground  | Standard, neutral, Zaehler, Groessen           |
+
+## Regeln
+
+- **Farbe ist OPTIONAL** - Im Zweifel weglassen (undefined)
+- **Max 2 farbige Stats pro Plugin** - Sonst wird es visuell unuebersichtlich
+- **Konsistenz:** Gleiche Bedeutung = gleiche Farbe ueberall
+- **Prozent-Schwellenwerte:** > 85% rot, 70-85% gelb, < 70% gruen (oder undefined)
+
+## Beispiele
+
+\`\`\`typescript
+// Speicher-Auslastung mit Schwellenwerten
+{ label: "Belegt", value: "72%", color: usedPercent > 85 ? "red" : usedPercent > 70 ? "yellow" : "green" }
+
+// Online/Offline Status
+{ label: "Status", value: "Online", color: "green" }
+{ label: "Status", value: "Offline", color: "red" }
+
+// Aktive Streams (gruen wenn > 0)
+{ label: "Streams", value: 3, color: activeStreams > 0 ? "green" : undefined }
+
+// Temperatur (immer blau)
+{ label: "CPU Temp", value: 45, unit: "°C", color: "blue" }
+
+// Neutrale Zaehler (keine Farbe)
+{ label: "Filme", value: 1234 }
+{ label: "Uptime", value: "3d 12h" }
+\`\`\`
+
+## Widget-Farben (in Widget-Komponenten)
+
+Widgets koennen dieselben Farben ueber Hilfsfunktionen anwenden:
+
+\`\`\`typescript
+function getStatColor(color?: string): string {
+  if (color === "green") return "text-emerald-400";
+  if (color === "red") return "text-red-400";
+  if (color === "yellow") return "text-yellow-400";
+  if (color === "blue") return "text-sky-400";
+  return "text-foreground";
+}
+
+function getStatBgColor(color?: string): string {
+  if (color === "green") return "bg-emerald-500/10";
+  if (color === "red") return "bg-red-500/10";
+  if (color === "yellow") return "bg-yellow-500/10";
+  if (color === "blue") return "bg-sky-500/10";
+  return "bg-muted/20";
+}
+\`\`\`
+`,
+
+  antiPatterns: `
+# Anti-Patterns (NICHT machen!)
+
+## 1. Widget das nur Stats groesser zeigt
+
+\`\`\`typescript
+// FALSCH: Widget zeigt nur Stats in groesserer Schrift
+function MeinWidget2x2({ stats }: WidgetProps) {
+  return (
+    <div className="grid grid-cols-2 gap-4 p-6">
+      {stats.items.map((item, i) => (
+        <div key={i} className="text-2xl font-bold">{item.value}</div>  // Nur groesser!
+      ))}
+    </div>
+  );
+}
+\`\`\`
+
+**Richtig:** Kein Widget erstellen. Stattdessen \`layout: "detailed"\` in renderHints verwenden.
+Widgets muessen visuellen Mehrwert bieten (Charts, Listen, Progress-Bars, Entity-Cards).
+
+## 2. Widget mit eigenen API-Calls
+
+\`\`\`typescript
+// FALSCH: Widget ruft eigene API auf
+function MeinWidget({ stats }: WidgetProps) {
+  const [data, setData] = useState(null);
+  useEffect(() => {
+    fetch("/api/my-custom-endpoint").then(r => r.json()).then(setData);  // VERBOTEN!
+  }, []);
+}
+\`\`\`
+
+**Richtig:** Alle Daten kommen ueber \`stats\` Prop. Der Polling-Loop des Systems
+liefert die Daten. Wenn das Widget spezielle Daten braucht, muessen diese in
+\`fetchStats()\` geholt und als StatItems zurueckgegeben werden.
+
+## 3. Widget ohne loading/error States
+
+\`\`\`typescript
+// FALSCH: Nur ok-State behandelt
+export function MeinWidget(props: WidgetProps) {
+  return <div>{props.stats.items.map(...)}</div>;  // Crash bei loading/error!
+}
+\`\`\`
+
+**Richtig:** Immer 3 States handlen:
+\`\`\`typescript
+export function MeinWidget(props: WidgetProps) {
+  if (props.stats.status === "loading") return <WidgetLoading />;
+  if (props.stats.status === "error") return <WidgetError error={props.stats.error} />;
+  // ... ok-State
+}
+\`\`\`
+
+## 4. fetchStats das Exceptions wirft
+
+\`\`\`typescript
+// FALSCH: Kein try/catch - Exception bricht den Polling-Loop
+async fetchStats(config) {
+  const res = await fetch(url);  // Kann werfen! (Netzwerk, Timeout)
+  const data = await res.json(); // Kann werfen! (kein JSON)
+  return { items: [...], status: "ok" };
+}
+\`\`\`
+
+**Richtig:** Immer try/catch mit error-Rueckgabe:
+\`\`\`typescript
+async fetchStats(config) {
+  try {
+    const res = await fetch(url, { signal: AbortSignal.timeout(5000) });
+    if (!res.ok) throw new Error(\\\`HTTP \\\${res.status}\\\`);
+    // ...
+    return { items: [...], status: "ok" };
+  } catch (err) {
+    return { items: [], status: "error", error: (err as Error).message };
+  }
+}
+\`\`\`
+
+## 5. fetch ohne AbortSignal.timeout(5000)
+
+\`\`\`typescript
+// FALSCH: Kein Timeout - kann alles blockieren
+await fetch(url);
+await fetch(url, { headers });
+
+// RICHTIG: Immer 5s Timeout
+await fetch(url, { signal: AbortSignal.timeout(5000) });
+await fetch(url, { headers, signal: AbortSignal.timeout(5000) });
+\`\`\`
+
+## 6. Stats Labels auf Englisch
+
+\`\`\`typescript
+// FALSCH: Englische Labels
+items.push({ label: "Used", value: "72%" });
+items.push({ label: "Free Space", value: "1.2 TB" });
+items.push({ label: "Error", value: "Connection failed" });
+
+// RICHTIG: Deutsche Labels
+items.push({ label: "Belegt", value: "72%" });
+items.push({ label: "Frei", value: "1,2 TB" });
+// Error-Messages:
+return { items: [], status: "error", error: "Verbindung fehlgeschlagen" };
+\`\`\`
+
+## 7. Plugin das von anderen Plugins abhaengt
+
+\`\`\`typescript
+// FALSCH: Import aus einem anderen Plugin
+import { formatBytes } from "../truenas";
+
+// RICHTIG: Shared Utilities importieren
+import { formatBytes, formatUptime } from "../../utils";
+\`\`\`
+
+Jedes Plugin ist vollstaendig eigenstaendig. Keine Imports aus anderen Plugins.
+Gemeinsame Funktionen kommen aus \`src/plugins/utils.ts\`.
+
+## 8. Canvas-Animationen in 1x1 Tiles
+
+\`\`\`typescript
+// FALSCH: Canvas in 1x1 Tile
+renderHints: {
+  "1x1": { maxStats: 1, layout: "widget", widgetComponent: "MeinCanvasWidget" },
+}
+\`\`\`
+
+1x1 Tiles haben kein Widget-Support. Nur Text und Zahlen via StatsDisplay.
+Canvas/SVG ist nur in 2x2 Widgets erlaubt (und auch dort einfach halten).
+
+## 9. Poll-Intervall unter 30 Sekunden
+
+Das Poll-Intervall wird vom System gesteuert (30s). Der Entwickler hat keinen
+Einfluss darauf. Es gibt keinen Mechanismus um kuerzere Intervalle zu setzen.
+Kuerzere Intervalle wuerden die Ziel-Services ueberlasten.
+
+## 10. Mehr als 6 Stats zurueckgeben
+
+\`\`\`typescript
+// TECHNISCH erlaubt, aber der Validator schneidet still bei 6 ab.
+// Die Stats 7+ werden einfach verworfen ohne Warnung.
+return { items: [stat1, stat2, stat3, stat4, stat5, stat6, stat7], status: "ok" };
+// stat7 wird NIE angezeigt!
+\`\`\`
+
+Maximal 6 Stats in der items-Liste. Reihenfolge = Prioritaet (wichtigste zuerst).
+`,
+
+  performanceRules: `
+# Performance-Regeln
+
+## API-Aufrufe
+
+| Regel                      | Details                                              |
+|----------------------------|------------------------------------------------------|
+| Poll-Intervall             | 30s (System steuert, Entwickler hat keinen Einfluss) |
+| fetchStats/testConnection  | AbortSignal.timeout(5000) PFLICHT                    |
+| crawlEntities              | AbortSignal.timeout(10000) erlaubt (mehr Daten)      |
+| Parallele Requests         | Promise.all() fuer unabhaengige Endpoints            |
+| Fehlerbehandlung           | fetchStats darf NIEMALS eine Exception werfen         |
+
+## Tab-Verhalten
+
+- **System pausiert Polling** wenn Tab verborgen ist (document.visibilitychange)
+- **System resumed Polling** wenn Tab wieder sichtbar wird (sofortiger Fetch + neuer Interval)
+- **Der Entwickler bekommt das gratis** - keine eigene Implementierung noetig
+
+## Grafische Last pro Tile-Groesse
+
+| Groesse | Erlaubt                                  | Verboten                          |
+|---------|------------------------------------------|-----------------------------------|
+| 1x1     | Nur Text/Zahlen, keine Grafiken          | Canvas, SVG, Animationen          |
+| 2x1     | Leichte CSS-Animationen, Progress-Bars   | Canvas, requestAnimationFrame     |
+| 2x2     | Canvas/SVG (einfach), CSS-Transitions    | requestAnimationFrame Loops,      |
+|         | Statische Charts, Progress-Bars          | schwere Animationen, Video        |
+
+## CSS vs JS Animationen
+
+\`\`\`typescript
+// BEVORZUGT: CSS Transition
+<div className="transition-all duration-300" style={{ width: \\\`\\\${percent}%\\\` }} />
+
+// VERMEIDEN: JS Animation
+useEffect(() => {
+  const id = requestAnimationFrame(animate);  // NICHT in Tiles verwenden
+  return () => cancelAnimationFrame(id);
+}, []);
+\`\`\`
+
+## Re-Render Optimierung
+
+\`\`\`typescript
+// RICHTIG: useMemo fuer berechnete Werte
+const processedItems = useMemo(() => {
+  return stats.items.map(item => ({
+    ...item,
+    percentage: parseFloat(String(item.value)),
+  }));
+}, [stats.items]);
+
+// FALSCH: Berechnung bei jedem Render
+const processedItems = stats.items.map(item => ({  // Laeuft bei jedem Render!
+  ...item,
+  percentage: parseFloat(String(item.value)),
+}));
+\`\`\`
+
+## Weitere Regeln
+
+- **Bildgroessen:** Keine Bilder > 100KB in Widgets laden
+- **DOM-Elemente:** Widget DOM-Baum flach halten (< 50 Elemente)
+- **Max 6 Stats:** Validator schneidet still ab - nicht mehr als 6 Items zurueckgeben
+- **Plugin-Code schlank:** < 200 Zeilen fuer einfache Plugins, < 400 fuer komplexe
+- **Keine externen Dependencies:** Nur Typen aus dem Framework importieren
+- **Shared Components nutzen:** WidgetHeader, CircularProgress, SparklineChart, etc.
+`,
+
+  checklist: `
+# Enhanced App Implementierungs-Checkliste
+
+## 1. Plugin-Datei erstellen
+
+- [ ] Datei angelegt: \`src/plugins/community/{id}/index.ts\`
+- [ ] Shared Utilities importiert: \`import { getVisibleStats, normalizeUrl, createErrorResponse, createFetchOptions } from "../../utils";\`
+- [ ] \`metadata.id\` in lowercase (z.B. "truenas", "emby")
+- [ ] \`metadata.name\` als Anzeigename
+- [ ] \`metadata.icon\` als simple-icons Slug (auf simpleicons.org pruefen, PascalCase)
+- [ ] \`metadata.color\` als Hex-Wert (#XXXXXX)
+- [ ] \`metadata.description\` auf Deutsch
+- [ ] \`metadata.category\` aus erlaubten Werten
+- [ ] \`metadata.website\` gesetzt (optional aber empfohlen)
+- [ ] \`configFields\` mit korrekten Typen und deutschen Labels
+- [ ] \`statOptions\` mit defaultEnabled fuer die wichtigsten 2-3
+- [ ] \`supportedSizes\` enthaelt mindestens \`"1x1"\`
+- [ ] \`renderHints\` fuer JEDE unterstuetzte Groesse vorhanden (KEIN features Feld)
+
+## 2. fetchStats implementieren
+
+- [ ] Aeusserer try/catch Block (darf NICHT werfen)
+- [ ] \`getVisibleStats(config, this.statOptions)\` verwenden (Shared Utility)
+- [ ] \`normalizeUrl(config.apiUrl)\` verwenden (Shared Utility)
+- [ ] \`createFetchOptions()\` fuer fetch-Optionen verwenden (Shared Utility)
+- [ ] \`createErrorResponse(err)\` im catch-Block verwenden (Shared Utility)
+- [ ] \`Promise.all()\` fuer parallele Requests
+- [ ] Stats-Reihenfolge = Prioritaet (wichtigste zuerst)
+- [ ] Farben korrekt verwendet (green/red/yellow/blue Konventionen)
+- [ ] Alle Labels auf Deutsch
+
+## 3. testConnection implementieren
+
+- [ ] try/catch Block
+- [ ] \`normalizeUrl()\` und \`createFetchOptions()\` verwenden
+- [ ] Leichtgewichtiger API-Endpunkt gewaehlt
+- [ ] Erfolg: \`{ ok: true, message: "Verbunden mit {Service}" }\`
+- [ ] Fehler: \`{ ok: false, message: "HTTP {status}: Zugriff verweigert" }\`
+- [ ] Deutsche Fehlermeldungen
+
+## 4. Registrierung (NUR community/index.ts)
+
+- [ ] Export in \`src/plugins/community/index.ts\` hinzugefuegt
+- [ ] Plugin im \`communityPlugins\` Array eingetragen
+- [ ] KEIN registry.ts bearbeiten (automatisch)
+- [ ] KEIN icons.ts bearbeiten (automatisch)
+
+## 5. Optional: crawlEntities
+
+- [ ] Nur implementiert wenn Entity-Auswahl sinnvoll ist
+- [ ] \`CrawlEntityGroup[]\` mit domain, label, icon, entities
+- [ ] \`AbortSignal.timeout(10000)\` (10s Timeout)
+- [ ] Deutsche Labels fuer Gruppen
+- [ ] Dual-Format Support in fetchStats (\`selectedEntities\` + \`entityIds\`)
+
+## 6. Optional: Widget-Komponente
+
+- [ ] Datei: \`src/components/widgets/{id}/{Name}Widget.tsx\`
+- [ ] \`"use client"\` Direktive am Anfang
+- [ ] Alle 3 Zustaende: loading (Spinner), error (Fehlermeldung), ok (Inhalt)
+- [ ] \`WidgetHeader\` fuer konsistente Kopfzeile
+- [ ] Groessen-Varianten implementiert (2x1 und/oder 2x2)
+- [ ] Widget in \`communityWidgets\` Map in \`community/index.ts\` eingetragen
+- [ ] \`widgetComponent\` in renderHints stimmt mit communityWidgets Key ueberein
+- [ ] KEINE eigenen API-Calls - nur stats Prop verwenden
+- [ ] DOM-Baum flach (< 50 Elemente)
+- [ ] Keine Bilder > 100KB
+
+## 7. Testen
+
+- [ ] \`npm run build\` kompiliert fehlerfrei
+- [ ] Verbindungstest im TileDialog funktioniert ("Verbunden mit ...")
+- [ ] Stats werden korrekt in 1x1 angezeigt
+- [ ] Stats werden korrekt in 2x1 angezeigt (falls unterstuetzt)
+- [ ] Widget rendert korrekt in 2x2 (falls vorhanden)
+- [ ] Loading-State wird kurz sichtbar beim Laden
+- [ ] Error-State wird bei falscher Config angezeigt
+- [ ] visibleStats Toggle funktioniert (Stats erscheinen/verschwinden)
+`,
+} as const;
