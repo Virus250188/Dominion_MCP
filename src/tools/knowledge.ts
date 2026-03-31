@@ -87,11 +87,12 @@ export function registerKnowledgeTools(server: McpServer): void {
   // ── get_data_contracts ────────────────────────────────────────────────
   server.tool(
     "get_data_contracts",
-    "Returns the data contracts for plugins: PluginStats, StatItem, ConfigField, StatOption interfaces, the fetchStats pattern with visibleStats, and color conventions.",
+    "Returns the data contracts for plugins: PluginStats (including widgetData), StatItem, ConfigField, StatOption interfaces, the fetchStats pattern with visibleStats, the widgetData pattern for rich widget rendering, and color conventions.",
     async () => {
       const text = [
         PATTERNS.pluginStructure,
         PATTERNS.fetchStatsPattern,
+        PATTERNS.widgetDataPattern,
         PATTERNS.colorConventions,
       ].join("\n\n---\n\n");
 
@@ -104,10 +105,15 @@ export function registerKnowledgeTools(server: McpServer): void {
   // ── get_widget_contract ───────────────────────────────────────────────
   server.tool(
     "get_widget_contract",
-    "Returns the widget component contract: WidgetProps interface, widget rules, WidgetHeader usage, registration pattern, and shared components.",
+    "Returns the widget component contract: WidgetProps interface (including widgetData), widget rules, WidgetHeader usage, registration pattern, shared components, and the TileDialog connection/feature fields UX pattern.",
     async () => {
+      const text = [
+        PATTERNS.widgetPattern,
+        PATTERNS.tileDialogUx,
+      ].join("\n\n---\n\n");
+
       return {
-        content: [{ type: "text" as const, text: PATTERNS.widgetPattern }],
+        content: [{ type: "text" as const, text }],
       };
     },
   );

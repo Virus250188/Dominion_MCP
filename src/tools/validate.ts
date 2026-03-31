@@ -182,6 +182,28 @@ function validatePluginStructure(pluginCode: string): ValidationResult {
     }
   }
 
+  // 19. widgetData consistency: if renderHints has widget layout, suggest using widgetData
+  const hasWidgetLayout = /layout\s*:\s*["']widget["']/.test(pluginCode);
+  const usesWidgetData = /widgetData\s*[=:{]/.test(pluginCode) || /widgetData\s*:/.test(pluginCode);
+  if (hasWidgetLayout && !usesWidgetData) {
+    warnings.push(
+      'Plugin has layout "widget" in renderHints but does not return widgetData. ' +
+      'Consider using widgetData in fetchStats for rich widget rendering (cover images, lists, etc.). ' +
+      'Example: return { items, status: "ok", widgetData: { recentItems: [...] } }'
+    );
+  }
+
+  // 20. Check configField feature-fields pattern: non-connection, non-required fields
+  //     should use type "select" or "number" (informational)
+  const hasSelectFields = /type\s*:\s*["']select["']/.test(pluginCode);
+  if (hasWidgetLayout && !hasSelectFields) {
+    warnings.push(
+      'Plugin has widget layout but no select-type configFields. ' +
+      'Consider adding widget-specific config options (e.g. carouselSpeed, mediaCategory) ' +
+      'as select fields that appear after the connection test passes.'
+    );
+  }
+
   return result(errors, warnings);
 }
 
@@ -288,6 +310,13 @@ function validateStatsOutput(statsJson: string): ValidationResult {
   if (stats.status === "error") {
     if (typeof stats.error !== "string" || stats.error.trim() === "") {
       warnings.push('status is "error" but no `error` message string is provided.');
+    }
+  }
+
+  // 8. widgetData validation (optional field)
+  if (stats.widgetData !== undefined) {
+    if (typeof stats.widgetData !== "object" || stats.widgetData === null || Array.isArray(stats.widgetData)) {
+      errors.push("widgetData must be a plain object (Record<string, unknown>), not an array or primitive.");
     }
   }
 

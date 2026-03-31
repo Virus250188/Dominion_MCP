@@ -249,7 +249,15 @@ ${selectedEntitiesBlock}
 
 ${visibleStatsConditions}
 
-      return { items, status: "ok" };
+      // Optional: widgetData fuer reichhaltige Widget-Daten (Cover-Bilder, Listen, etc.)
+      // Nur noetig wenn ein Widget mehr als Stats braucht.
+      // const widgetData = {
+      //   recentItems: [...],
+      //   // Config-Werte fuer das Widget durchreichen:
+      //   // someConfigValue: parseInt(String(config.someField || "5"), 10),
+      // };
+
+      return { items, status: "ok" /* , widgetData */ };
     } catch (err) {
       return createErrorResponse(err);
     }
@@ -304,6 +312,8 @@ function generateWidgetCode(params: {
     subComponents.push(`
 function ${widgetName}2x1({ stats }: WidgetProps) {
   const items = stats.items.slice(0, 6);
+  // Read rich widget data (if plugin provides it via fetchStats widgetData):
+  // const widgetData = stats.widgetData as { recentItems?: unknown[] } | undefined;
 
   return (
     <div className="flex flex-col h-full">
@@ -347,6 +357,8 @@ function ${widgetName}2x1({ stats }: WidgetProps) {
     subComponents.push(`
 function ${widgetName}2x2({ stats }: WidgetProps) {
   const items = stats.items.slice(0, 4);
+  // Read rich widget data (if plugin provides it via fetchStats widgetData):
+  // const widgetData = stats.widgetData as { recentItems?: unknown[] } | undefined;
 
   return (
     <div className="flex flex-col h-full">

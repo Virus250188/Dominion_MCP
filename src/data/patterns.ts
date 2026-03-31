@@ -208,12 +208,46 @@ configFields: [
 ],
 \`\`\`
 
+### Muster 5: Widget-spezifische Feature-Felder (z.B. Emby)
+\`\`\`typescript
+configFields: [
+  // Connection fields (immer sichtbar):
+  { key: "apiUrl", label: "Server URL", type: "url", required: true, ... },
+  { key: "apiKey", label: "API Key", type: "password", required: true, ... },
+  // Feature fields (erst nach erfolgreichem Verbindungstest sichtbar):
+  {
+    key: "mediaCategory",
+    label: "Medien-Kategorie",
+    type: "select",
+    description: "Welche Kategorie soll in den Widgets angezeigt werden?",
+    options: [
+      { label: "Filme", value: "Movie" },
+      { label: "Serien", value: "Series" },
+      { label: "Filme & Serien", value: "Mixed" },
+    ],
+  },
+  {
+    key: "carouselSpeed",
+    label: "Karussell-Geschwindigkeit",
+    type: "select",
+    options: [
+      { label: "Langsam (8s)", value: "8000" },
+      { label: "Normal (5s)", value: "5000" },
+      { label: "Schnell (3s)", value: "3000" },
+    ],
+  },
+],
+\`\`\`
+
 ## Regeln
 - **apiUrl ist fast immer das erste Feld** mit type: "url" und required: true
 - **Labels und Beschreibungen auf Deutsch**
 - **Hilfreiche Descriptions:** Sage dem User WO er den Key/Token findet
 - **Placeholders:** Zeige ein realistisches Beispiel der URL
-- **Reihenfolge:** URL zuerst, dann Authentifizierung, dann optionale Felder
+- **Reihenfolge:** URL zuerst, dann Authentifizierung, dann optionale Feature-Felder
+- **Connection vs Feature Split:** Connection-Felder (apiUrl, apiKey, etc.) sind immer sichtbar.
+  Feature-Felder (mediaCategory, carouselSpeed, etc.) werden im TileDialog erst nach
+  erfolgreichem Verbindungstest angezeigt. Feature-Felder NICHT als required markieren.
 `,
 
   statOptions: `
@@ -294,7 +328,7 @@ interface PluginConfig {
   entityIds?: string;           // Legacy: Komma-/Newline-separierte Entity-IDs
   visibleStats?: unknown;       // JSON-String ODER Array (backward compat)
   selectedEntities?: unknown;   // JSON-String ODER Array (backward compat)
-  [key: string]: unknown;       // Weitere benutzerdefinierte Felder
+  [key: string]: unknown;       // Weitere benutzerdefinierte Felder (mediaCategory, carouselSpeed, etc.)
 }
 \`\`\`
 
@@ -319,6 +353,125 @@ formatBytes(bytes: number): string
 // Uptime formatieren (z.B. 90000 -> "1d 1h")
 formatUptime(seconds: number): string
 \`\`\`
+`,
+
+  widgetDataPattern: `
+# widgetData Pattern (Reichhaltige Widget-Daten)
+
+## Konzept
+
+Plugins koennen neben den \`items\` (StatItem[]) auch ein \`widgetData\` Objekt zurueckgeben.
+\`widgetData\` ist ein freies \`Record<string, unknown>\` und wird NICHT vom Validator gefiltert.
+Es wird direkt an die Widget-Komponente durchgereicht via \`stats.widgetData\`.
+
+## Wann verwenden?
+
+- Wenn das Widget **mehr als nur Zahlen** anzeigen soll (z.B. Cover-Bilder, Listen, Metadaten)
+- Wenn Widget-spezifische **Konfigurationswerte** weitergegeben werden muessen (z.B. Karussell-Geschwindigkeit)
+- Wenn die Daten **nicht in das StatItem-Format** passen (z.B. Arrays von Objekten)
+
+## Emby Referenz-Beispiel
+
+Das Emby Plugin ist das Referenz-Beispiel fuer widgetData:
+
+\`\`\`typescript
+// In fetchStats():
+return {
+  items,          // Normale Stats: Streams, Filme, Serien
+  status: "ok",
+  widgetData: {
+    recentItems: [    // Array von kuerzlich hinzugefuegten Medien
+      {
+        id: "12345",
+        title: "Film Name",
+        year: 2024,
+        rating: 7.5,
+        officialRating: "PG-13",
+        type: "Movie",               // oder "Series"
+        imageUrl: "http://emby.local:8096/Items/12345/Images/Primary?maxHeight=400&quality=90",
+        overview: "Kurze Beschreibung...",
+      },
+    ],
+    mediaCategory: "Mixed",          // Config-Wert durchgereicht
+    carouselSpeed: 5000,             // Config-Wert durchgereicht (ms)
+    carouselItems: 5,                // Config-Wert durchgereicht
+  },
+};
+\`\`\`
+
+## Widget-spezifische ConfigFields
+
+Plugins die widgetData verwenden, definieren haeufig zusaetzliche ConfigFields
+fuer Widget-Einstellungen. Diese Feature-Felder werden im TileDialog ERST
+angezeigt, nachdem der Verbindungstest erfolgreich war.
+
+\`\`\`typescript
+// Emby configFields (nach apiUrl + apiKey):
+{
+  key: "mediaCategory",
+  label: "Medien-Kategorie",
+  type: "select",
+  description: "Welche Kategorie soll in den Widgets angezeigt werden?",
+  options: [
+    { label: "Filme", value: "Movie" },
+    { label: "Serien", value: "Series" },
+    { label: "Filme & Serien", value: "Mixed" },
+  ],
+},
+{
+  key: "carouselSpeed",
+  label: "Karussell-Geschwindigkeit",
+  type: "select",
+  options: [
+    { label: "Langsam (8s)", value: "8000" },
+    { label: "Normal (5s)", value: "5000" },
+    { label: "Schnell (3s)", value: "3000" },
+  ],
+},
+{
+  key: "carouselItems",
+  label: "Anzahl Covers",
+  type: "select",
+  options: [
+    { label: "3 Covers", value: "3" },
+    { label: "5 Covers", value: "5" },
+    { label: "8 Covers", value: "8" },
+    { label: "10 Covers", value: "10" },
+  ],
+},
+\`\`\`
+
+## Im Widget lesen
+
+\`\`\`typescript
+function EmbyWidget2x2({ stats }: WidgetProps) {
+  const widgetData = stats.widgetData as {
+    recentItems?: Array<{ id: string; title: string; imageUrl: string; ... }>;
+    carouselSpeed?: number;
+    carouselItems?: number;
+    mediaCategory?: string;
+  } | undefined;
+
+  const recentItems = widgetData?.recentItems || [];
+  const speed = widgetData?.carouselSpeed || 5000;
+
+  // Pre-render slides, use CSS opacity transitions (no JS-driven fades)
+  return (
+    <div className="flex flex-col h-full">
+      {/* ... carousel with CSS transitions ... */}
+    </div>
+  );
+}
+\`\`\`
+
+## Regeln
+
+1. **widgetData ist optional** - Plugins ohne Widgets brauchen es nicht
+2. **Nicht fuer Stats verwenden** - Stats gehoeren in \`items\`, nicht in widgetData
+3. **Config-Werte durchreichen** - Widget-spezifische Config-Werte (carouselSpeed etc.) in widgetData ablegen
+4. **Im Widget typisieren** - \`stats.widgetData as { ... } | undefined\` mit Fallback-Werten
+5. **Bildgroessen begrenzen** - Image-URLs sollten \`maxHeight=400\` oder aehnlich haben
+6. **CSS-Transitions bevorzugen** - Fuer Karussells und Uebergaenge CSS opacity verwenden statt JS-Animationen
 `,
 
   fetchStatsPattern: `
@@ -383,8 +536,12 @@ async fetchStats(config: PluginConfig): Promise<PluginStats> {
       });
     }
 
-    // 8. Zurueckgeben (NICHT selbst slicen, Validator macht das)
-    return { items, status: "ok" };
+    // 8. Optional: widgetData fuer reichhaltige Widget-Daten
+    // Nur noetig wenn das Plugin ein Widget hat das mehr als Stats braucht
+    // const widgetData = { recentItems: [...], carouselSpeed: 5000 };
+
+    // 9. Zurueckgeben (NICHT selbst slicen, Validator macht das)
+    return { items, status: "ok" /* , widgetData */ };
   } catch (err) {
     // 9. NIEMALS eine Exception werfen! Shared Utility fuer Error-Response.
     return createErrorResponse(err);
@@ -653,6 +810,7 @@ interface EnhancedStats {
   items: StatItem[];
   status: "ok" | "error" | "loading";
   error?: string;
+  widgetData?: Record<string, unknown>;    // Reichhaltige Daten vom Plugin (Cover-Bilder, Listen, etc.)
 }
 \`\`\`
 
@@ -715,7 +873,7 @@ function MeinPlugin2x1({ stats }: WidgetProps) {
         status={stats.status === "ok" ? "online" : "offline"}
       />
       <div className="flex-1 p-2 min-h-0">
-        {/* 2x1 Content: ~92px verfuegbar */}
+        {/* 2x1 Content: ~112px verfuegbar */}
         {/* z.B. kompakte Cards, Progress-Bars, Inline-Stats */}
       </div>
     </div>
@@ -736,7 +894,7 @@ function MeinPlugin2x2({ stats }: WidgetProps) {
         status={stats.status === "ok" ? "online" : "offline"}
       />
       <div className="flex-1 p-3 min-h-0">
-        {/* 2x2 Content: ~250px verfuegbar */}
+        {/* 2x2 Content: ~290px verfuegbar */}
         {/* z.B. Grid mit Entity-Cards, Charts, Listen */}
       </div>
     </div>
@@ -805,6 +963,8 @@ Der Name muss EXAKT mit \`renderHints[size].widgetComponent\` uebereinstimmen.
 6. **Widget-Name muss mit renderHints.widgetComponent uebereinstimmen**
 7. **Shared Components nutzen:** CircularProgress, SparklineChart, HorizontalProgressBar, ControlButton
 8. **Texte auf Deutsch** - "Laden...", "Verbindungsfehler", "Keine Daten"
+9. **widgetData nutzen** - Reichhaltige Daten (Listen, Bilder) aus \`stats.widgetData\` lesen, mit Type-Assertion und Fallback-Werten
+10. **CSS-Transitions bevorzugen** - Fuer Karussells und Uebergaenge CSS opacity/transform verwenden statt JS-Animationen (pre-rendered slides mit opacity transitions)
 `,
 
   registrationPattern: `
@@ -854,6 +1014,62 @@ Nach der Registrierung prueft \`validatePlugin()\` automatisch:
 
 Bei Fehler: Plugin wird NICHT registriert, Fehler in Console.
 Doppelte IDs werden erkannt und uebersprungen (Warnung in Console).
+`,
+
+  tileDialogUx: `
+# TileDialog UX: Connection-Fields vs Feature-Fields
+
+## Konzept
+
+Im TileDialog werden die \`configFields\` eines Plugins in zwei Gruppen aufgeteilt:
+
+1. **Connection Fields** - Immer sichtbar (apiUrl, apiKey, accessToken, username, password + alle required-Felder)
+2. **Feature Fields** - Erst sichtbar NACH erfolgreichem Verbindungstest (nicht-required, nicht-Connection)
+
+## Aufteilungs-Logik
+
+\`\`\`typescript
+const CONNECTION_KEYS = new Set(["apiUrl", "apiKey", "accessToken", "username", "password"]);
+
+const connectionFields = plugin.configFields.filter(
+  (f) => CONNECTION_KEYS.has(f.key) || f.required
+);
+
+const featureFields = plugin.configFields.filter(
+  (f) => !CONNECTION_KEYS.has(f.key) && !f.required
+);
+\`\`\`
+
+## Flow
+
+1. User gibt Titel ein -> Plugin wird erkannt -> Connection-Fields erscheinen
+2. User fuellt apiUrl + apiKey aus
+3. User klickt "Verbindung testen"
+4. Bei Erfolg: Feature-Fields erscheinen (z.B. mediaCategory, carouselSpeed)
+5. Stat-Optionen und Groessen-Auswahl erscheinen ebenfalls erst nach dem Test
+
+## Auswirkung auf Plugin-Design
+
+Plugin-Entwickler muessen darauf achten:
+- **Connection-relevante Felder:** \`key\` sollte \`apiUrl\`, \`apiKey\`, \`accessToken\`, \`username\`, oder \`password\` sein,
+  ODER \`required: true\` setzen
+- **Feature-Felder:** Alle anderen (mediaCategory, carouselSpeed, etc.) mit \`required: false\`
+  (oder required weglassen, da default false)
+- Feature-Felder werden NUR angezeigt wenn die Verbindung bereits getestet wurde
+
+## Size-spezifische Hints
+
+Im TileDialog werden unter der Groessen-Auswahl Hints angezeigt:
+
+\`\`\`typescript
+const SIZE_HINTS = {
+  "1x1": "Info-Panel -- Zeigt bis zu 3 Statistiken",
+  "2x1": "Mini Widget -- Kompakte Medienvorschau",
+  "2x2": "Widget -- Vollstaendige Medienansicht mit Karussell",
+};
+\`\`\`
+
+Die Hints helfen dem Benutzer die richtige Groesse zu waehlen.
 `,
 
   colorConventions: `
@@ -954,8 +1170,9 @@ function MeinWidget({ stats }: WidgetProps) {
 \`\`\`
 
 **Richtig:** Alle Daten kommen ueber \`stats\` Prop. Der Polling-Loop des Systems
-liefert die Daten. Wenn das Widget spezielle Daten braucht, muessen diese in
-\`fetchStats()\` geholt und als StatItems zurueckgegeben werden.
+liefert die Daten. Wenn das Widget spezielle Daten braucht (z.B. Cover-Bilder,
+Listen), muessen diese in \`fetchStats()\` geholt und als \`widgetData\` zurueckgegeben
+werden. Das Widget liest dann \`stats.widgetData\`.
 
 ## 3. Widget ohne loading/error States
 
@@ -1204,6 +1421,8 @@ const processedItems = stats.items.map(item => ({  // Laeuft bei jedem Render!
 - [ ] Widget in \`communityWidgets\` Map in \`community/index.ts\` eingetragen
 - [ ] \`widgetComponent\` in renderHints stimmt mit communityWidgets Key ueberein
 - [ ] KEINE eigenen API-Calls - nur stats Prop verwenden
+- [ ] widgetData aus stats.widgetData lesen (mit Type-Assertion und Fallback)
+- [ ] CSS-Transitions fuer Karussells/Uebergaenge (keine JS-Animationen)
 - [ ] DOM-Baum flach (< 50 Elemente)
 - [ ] Keine Bilder > 100KB
 

@@ -50,6 +50,14 @@ Beide implementieren das gleiche \`AppPlugin\` Interface.
   bevor sie den Client erreichen. Ungueltige Eintraege werden entfernt, maximal
   6 Items durchgelassen.
 
+- **widgetData (optional):** Plugins koennen neben \`items\` auch ein \`widgetData\`
+  Objekt zurueckgeben (\`Record<string, unknown>\`), das reichhaltige Daten fuer
+  Widget-Rendering enthaelt (z.B. Cover-Bilder, Listen, Medien-Metadaten).
+  \`widgetData\` wird NICHT vom Validator gefiltert -- es wird direkt an die
+  Widget-Komponente durchgereicht via \`stats.widgetData\`.
+  Beispiel: Das Emby Plugin liefert \`widgetData: { recentItems, mediaCategory,
+  carouselSpeed, carouselItems }\` fuer ein Medien-Karussell im Widget.
+
 - **Deutsche Sprache:** Alle Labels, Beschreibungen und Fehlermeldungen muessen
   auf Deutsch sein. Code-Kommentare bleiben auf Englisch fuer die Agent-Lesbarkeit.
 
@@ -324,6 +332,8 @@ interface PluginStats {
   items: StatItem[];      // Max 6 nach Validierung
   status: "ok" | "error";
   error?: string;         // DEUTSCH! z.B. "Verbindung fehlgeschlagen"
+  /** Optional: Reichhaltige Daten fuer Widget-Rendering (nicht vom Validator gefiltert) */
+  widgetData?: Record<string, unknown>;
 }
 \`\`\`
 
@@ -397,7 +407,16 @@ Der Entwickler bestimmt nur, welche Daten und Visualisierungen darin erscheinen.
   - \`layout\`: \`"compact"\` (1x1) | \`"detailed"\` (2x1) | \`"widget"\` (2x2, optional 2x1)
   - \`widgetComponent?\`: Name der Widget-Komponente (nur bei layout: "widget")
 
-### 6. fetchStats-Logik (\`fetchStats(config) -> Promise<PluginStats>\`)
+### 6. Widget-spezifische ConfigFields
+- Plugins koennen neben Verbindungsfeldern (apiUrl, apiKey) auch **Feature-Felder**
+  fuer Widget-Einstellungen definieren (z.B. Karussell-Geschwindigkeit, Medien-Kategorie)
+- Im TileDialog werden diese Feature-Felder ERST angezeigt, nachdem der Verbindungstest
+  erfolgreich war (Connection-Fields vs Feature-Fields Split)
+- Feature-Felder nutzen haeufig \`type: "select"\` mit vordefinierten Optionen
+- Beispiel (Emby): \`mediaCategory\` (Filme/Serien/Mixed), \`carouselSpeed\` (3s/5s/8s),
+  \`carouselItems\` (3/5/8/10 Covers)
+
+### 7. fetchStats-Logik (\`fetchStats(config) -> Promise<PluginStats>\`)
 - Shared Utilities verwenden:
   - \`getVisibleStats(config, this.statOptions)\` statt manuelles JSON.parse
   - \`normalizeUrl(config.apiUrl)\` statt manuelles replace
@@ -408,19 +427,23 @@ Der Entwickler bestimmt nur, welche Daten und Visualisierungen darin erscheinen.
 - Aufbau der StatItem-Liste mit deutschen Labels
 - MUSS try/catch haben und bei Fehler \`createErrorResponse(err)\` zurueckgeben
 - DARF KEINE Exceptions werfen (wuerde den Polling-Loop brechen)
+- Kann optional \`widgetData\` zurueckgeben fuer reichhaltige Widget-Daten:
+  \`return { items, status: "ok", widgetData: { recentItems, ... } }\`
+- Widget-spezifische Config-Werte (z.B. carouselSpeed) aus \`config\` lesen und
+  in \`widgetData\` weiterreichen, damit das Widget sie verwenden kann
 
-### 7. testConnection-Logik (\`testConnection(config) -> Promise<{ ok, message }>\`)
+### 8. testConnection-Logik (\`testConnection(config) -> Promise<{ ok, message }>\`)
 - Verbindungstest zum Ziel-Service
 - Rueckgabe: \`{ ok: true, message: "Verbunden mit {name}" }\` bei Erfolg
 - Rueckgabe: \`{ ok: false, message: "HTTP {status}: Zugriff verweigert" }\` bei Fehler
 - Deutsche Fehlermeldungen
 
-### 8. Optional: crawlEntities (\`crawlEntities?(config) -> Promise<{ groups: CrawlEntityGroup[] }>\`)
+### 9. Optional: crawlEntities (\`crawlEntities?(config) -> Promise<{ groups: CrawlEntityGroup[] }>\`)
 - Nur fuer Services mit vielen waehlbaren Entities (z.B. Home Assistant)
 - Gibt gruppierte Entity-Liste zurueck fuer den Entity-Picker im TileDialog
 - Jede Gruppe: \`{ domain, label, icon, entities: [{ id, name, state }] }\`
 
-### 9. Optional: Widget-Komponente
+### 10. Optional: Widget-Komponente
 - React-Komponente in \`src/components/widgets/{id}/{Name}Widget.tsx\`
 - \`"use client"\` Direktive am Anfang
 - Empfaengt WidgetProps: \`{ stats, config, tileId, size, onAction? }\`
@@ -451,7 +474,7 @@ Der Entwickler bestimmt nur, welche Daten und Visualisierungen darin erscheinen.
 - **Tab-Visibility:** document.visibilitychange Event pausiert/resumed Polling
 - **API-Proxy:** \`/api/enhanced/[appId]\` laedt Tile aus DB, ruft fetchStats auf
 - **Stats-Validierung:** \`validateStats()\` sanitized und begrenzt Items auf max 6
-- **Grid-Layout:** \`gridAutoRows: 140px\`, columnSpan/rowSpan steuern die Tile-Groesse
+- **Grid-Layout:** \`gridAutoRows: 160px\`, 6-Spalten Grid, columnSpan/rowSpan steuern die Tile-Groesse
 
 ### Konfiguration (System stellt die UI bereit)
 - **TileDialog:** Auto-Detection, Enhanced-Config-UI, Groessen-Auswahl

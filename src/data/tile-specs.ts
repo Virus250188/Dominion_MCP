@@ -11,7 +11,7 @@ export const TILE_SPECS = {
 |-------------------|---------------------|------------------------|--------------------------|
 | Grid Spalten      | 1 (columnSpan: 1)   | 2 (columnSpan: 2)      | 2 (columnSpan: 2)        |
 | Grid Zeilen       | 1 (rowSpan: 1)      | 1 (rowSpan: 1)         | 2 (rowSpan: 2)           |
-| Hoehe             | 140px               | 140px                  | 296px (2*140 + 16 gap)   |
+| Hoehe             | 160px               | 160px                  | 336px (2*160 + 16 gap)   |
 | Max Stats         | 3 (sichtbar)        | 6                      | 6                        |
 | Layout            | compact             | detailed ODER widget   | widget ODER detailed     |
 | Widget-Support    | Nein                | Optional               | Ja (empfohlen)           |
@@ -19,10 +19,10 @@ export const TILE_SPECS = {
 
 ### Wichtige Regeln:
 
-- **gridAutoRows: 140px** - Jede Grid-Zeile ist exakt 140px hoch
+- **gridAutoRows: 160px** - Jede Grid-Zeile ist exakt 140px hoch
 - **gap: 16px (1rem)** - Abstand zwischen Tiles
 - Die tatsaechliche Hoehe eines 2x2 Tiles ist \`2 * 140 + 16 = 296px\` (inkl. Gap)
-- Responsive Breakpoints: 5 Spalten (Desktop) -> 3 Spalten (< 1024px) -> 2 Spalten (< 640px)
+- Responsive Breakpoints: 6 Spalten (Desktop) -> 4 Spalten (< 1024px) -> 2 Spalten (< 640px)
 - 1x1 Tiles sind IMMER verfuegbar, auch fuer Enhanced Apps
 - 2x1 und 2x2 sind NUR fuer Enhanced Apps mit entsprechenden supportedSizes
 
@@ -45,7 +45,7 @@ export const TILE_SPECS = {
   "1x1": {
     name: "Klein (1x1)",
     gridSpans: { columnSpan: 1, rowSpan: 1 },
-    height: "140px",
+    height: "160px",
     maxStats: 3,
     layout: "compact" as const,
     widgetSupport: false,
@@ -72,13 +72,16 @@ export const TILE_SPECS = {
 
 - columnSpan: 1
 - rowSpan: 1
-- Hoehe: 140px (1 Grid-Zeile)
-- Breite: 1 Grid-Spalte (variiert je nach Gesamtspalten)
+- Hoehe: 160px (1 Grid-Zeile)
+- Breite: 1 Grid-Spalte (variiert je nach Gesamtspalten, 6 Spalten Desktop)
 
 ## Was der Entwickler kontrolliert
 
 Der Entwickler bestimmt ueber \`fetchStats()\` welche Stats erscheinen.
 Das System rendert alles andere: Icon, Titel, Glass Card, Online-Punkt, Context Menu.
+
+**1x1 Tile Styling:** Kompakter Aufbau mit \`p-3 pt-6\`, \`gap-1.5\`, Icon 40px.
+Wenn Stats vorhanden sind, wird die Beschreibung ausgeblendet fuer mehr Platz.
 
 Der Stats-Bereich zeigt maximal 3 Items in einer horizontalen Reihe:
 - Jeder Stat: Wert oben (text-xs, font-semibold, tabular-nums), Label unten (text-[9px], muted)
@@ -118,7 +121,7 @@ renderHints: {
   "2x1": {
     name: "Mittel (2x1)",
     gridSpans: { columnSpan: 2, rowSpan: 1 },
-    height: "140px",
+    height: "160px",
     maxStats: 6,
     layout: "detailed" as const,
     widgetSupport: true,
@@ -153,7 +156,7 @@ renderHints: {
 
 - columnSpan: 2
 - rowSpan: 1
-- Hoehe: 140px (1 Grid-Zeile)
+- Hoehe: 160px (1 Grid-Zeile)
 - Breite: 2 Grid-Spalten (doppelt so breit wie 1x1)
 
 ## Was der Entwickler kontrolliert
@@ -169,7 +172,7 @@ renderHints: {
 - Context Menu bleibt (absolute positioned, vom System)
 - Widget erhaelt \`size: "2x1"\` als Prop
 - Geeignet fuer: kompakte Entity-Cards, Progress-Bars, Mini-Charts
-- WidgetHeader.tsx verwenden fuer konsistente Kopfzeile (40px hoch, dann ~92px Content)
+- WidgetHeader.tsx verwenden fuer konsistente Kopfzeile (40px hoch, dann ~112px Content)
 
 ## renderHints Format
 
@@ -194,7 +197,7 @@ renderHints: {
 
 ## Einschraenkungen
 
-- **140px Hoehe** - Wenig vertikaler Platz, alles muss in eine Zeile passen
+- **160px Hoehe** - Wenig vertikaler Platz, alles muss in eine Zeile passen
 - **Leichte CSS-Animationen OK** - Transitions, Progress-Bars, Farbwechsel
 - **Kein Canvas** - Nicht genug Platz, zu schwer fuer die Groesse
 - **Widget muss loading/error handlen** - 3 States Pflicht
@@ -205,7 +208,7 @@ renderHints: {
   "2x2": {
     name: "Gross (2x2)",
     gridSpans: { columnSpan: 2, rowSpan: 2 },
-    height: "296px (2 * 140 + 16 gap)",
+    height: "336px (2 * 160 + 16 gap)",
     maxStats: 6,
     layout: "widget" as const,
     widgetSupport: true,
@@ -226,7 +229,7 @@ renderHints: {
 | | |                                                          | | |
 | | |  Widget-Inhalt (flex-1, overflow-hidden)                 | | |
 | | |  z.B. Entity-Grid, Charts, Listen, Progress-Bars        | | |
-| | |  Verfuegbare Hoehe: ~250px                               | | |
+| | |  Verfuegbare Hoehe: ~290px                               | | |
 | | |                                                          | | |
 | | |                                                          | | |
 | | +----------------------------------------------------------+ | |
@@ -257,19 +260,19 @@ renderHints: {
 
 - columnSpan: 2
 - rowSpan: 2
-- Hoehe: ~296px (2 * 140px Zeilen + 16px Gap)
+- Hoehe: ~336px (2 * 160px Zeilen + 16px Gap)
 - Breite: 2 Grid-Spalten
 
 ## Was der Entwickler kontrolliert
 
 ### Bei layout: "widget" (empfohlen fuer 2x2)
 - Gesamter Tile-Inhalt via Widget-Komponente
-- Glass-Card mit \`overflow-hidden\` ist gesetzt
+- Glass-Card mit \`overflow-hidden rounded-xl\` ist gesetzt (alle grid items clip overflow)
 - Widget in \`<div className="flex-1 flex flex-col min-h-0">\` gewrappt
 - Context Menu bleibt (absolute positioned, vom System)
 - Widget erhaelt \`size: "2x2"\` als Prop
 - WidgetHeader fuer Kopfzeile verwenden (40px, border-bottom)
-- Restlicher Platz: ~250px fuer Widget-Inhalt
+- Restlicher Platz: ~290px fuer Widget-Inhalt
 
 ### Bei layout: "detailed" (Fallback)
 - Stats-Inhalte via \`fetchStats()\`
