@@ -167,10 +167,10 @@ function validatePluginStructure(pluginCode: string): ValidationResult {
   if (iconMatch) {
     const iconSlug = iconMatch[1];
     if (/\s/.test(iconSlug)) {
-      errors.push(`metadata.icon "${iconSlug}" contains spaces. Must be a valid simple-icons slug (PascalCase, no spaces, e.g. "Homeassistant").`);
+      errors.push(`metadata.icon "${iconSlug}" contains spaces. Must be a valid simple-icons slug (PascalCase, no spaces, e.g. "Emby").`);
     }
     if (!/^[A-Za-z][A-Za-z0-9]*$/.test(iconSlug)) {
-      warnings.push(`metadata.icon "${iconSlug}" may not be a valid simple-icons slug. Expected PascalCase like "Truenas" or "Emby". Check https://simpleicons.org.`);
+      warnings.push(`metadata.icon "${iconSlug}" may not be a valid simple-icons slug. Expected PascalCase like "Emby" or "Grafana". Check https://simpleicons.org.`);
     }
   }
 
@@ -201,6 +201,41 @@ function validatePluginStructure(pluginCode: string): ValidationResult {
       'Plugin has widget layout but no select-type configFields. ' +
       'Consider adding widget-specific config options (e.g. carouselSpeed, mediaCategory) ' +
       'as select fields that appear after the connection test passes.'
+    );
+  }
+
+  // 21. Auto-Discovery: Check for standardized exports (community plugins)
+  const hasStandardPluginExport = /export\s+const\s+plugin\s*[=:]/.test(pluginCode);
+  const hasWidgetExport = /export\s+const\s+widget\s*=/.test(pluginCode);
+  const hasWidgetNameExport = /export\s+const\s+widgetName\s*=/.test(pluginCode);
+
+  if (!hasStandardPluginExport) {
+    // Check if it uses the legacy {name}Plugin format
+    const legacyExport = /export\s+const\s+\w+Plugin\s*[=:]/.test(pluginCode);
+    if (legacyExport) {
+      warnings.push(
+        'Plugin uses legacy export format (export const {name}Plugin). ' +
+        'Community plugins must use: export const plugin: AppPlugin = { ... }'
+      );
+    } else {
+      errors.push(
+        'Missing `export const plugin`. Community plugins must export: ' +
+        'export const plugin: AppPlugin = { ... }'
+      );
+    }
+  }
+
+  if (!hasWidgetExport) {
+    warnings.push(
+      'Missing `export const widget`. Community plugins must export: ' +
+      'export const widget = MyWidget; (or null if no widget)'
+    );
+  }
+
+  if (!hasWidgetNameExport) {
+    warnings.push(
+      'Missing `export const widgetName`. Community plugins must export: ' +
+      'export const widgetName = "MyWidget"; (or null if no widget)'
     );
   }
 

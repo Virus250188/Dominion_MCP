@@ -19,9 +19,9 @@ export const TILE_SPECS = {
 
 ### Wichtige Regeln:
 
-- **gridAutoRows: 160px** - Jede Grid-Zeile ist exakt 140px hoch
+- **gridAutoRows: 160px** - Jede Grid-Zeile ist exakt 160px hoch
 - **gap: 16px (1rem)** - Abstand zwischen Tiles
-- Die tatsaechliche Hoehe eines 2x2 Tiles ist \`2 * 140 + 16 = 296px\` (inkl. Gap)
+- Die tatsaechliche Hoehe eines 2x2 Tiles ist \`2 * 160 + 16 = 336px\` (inkl. Gap)
 - Responsive Breakpoints: 6 Spalten (Desktop) -> 4 Spalten (< 1024px) -> 2 Spalten (< 640px)
 - 1x1 Tiles sind IMMER verfuegbar, auch fuer Enhanced Apps
 - 2x1 und 2x2 sind NUR fuer Enhanced Apps mit entsprechenden supportedSizes
@@ -289,7 +289,7 @@ renderHints: {
   "2x2": {
     maxStats: 4,  // Stats werden dem Widget via props uebergeben
     layout: "widget",
-    widgetComponent: "TrueNASWidget",
+    widgetComponent: "MeinServiceWidget",
   },
 }
 
@@ -324,10 +324,10 @@ renderHints: {
 Verwende 1x1 fuer:
 - **Einfache Services mit 1-3 Schluesselmetriken**
 - Beispiele:
-  - TrueNAS: Belegt %, Frei GB, Uptime
-  - Emby: Streams, Filme, Serien
-  - Pi-hole: Queries, Blocked %, Status
-  - JDownloader: Downloads, Geschwindigkeit
+  - Emby: Streams, Filme, Serien (Referenz-Plugin)
+  - NAS-Service: Belegt %, Frei GB, Uptime
+  - DNS-Blocker: Queries, Blocked %, Status
+  - Download-Manager: Downloads, Geschwindigkeit
 - Jedes Plugin MUSS mindestens 1x1 unterstuetzen
 
 ## 2x1 (Mittel) - Wenn 1x1 zu eng wird
@@ -335,12 +335,13 @@ Verwende 1x1 fuer:
 Verwende 2x1 wenn:
 - **Mehr als 3 wichtige Metriken** vorhanden sind
 - **Mini-Visualisierungen** Mehrwert bieten (Progress-Bars, kleine Charts)
-- **Kompakte Entity-Cards** sinnvoll sind (z.B. Home Assistant Sensoren nebeneinander)
+- **Kompakte Entity-Cards** sinnvoll sind (z.B. Sensoren nebeneinander)
 - Der Service genuegend Daten liefert, um die doppelte Breite zu rechtfertigen
 - Beispiele:
-  - Home Assistant: 4-6 Sensor-Cards kompakt nebeneinander
-  - TrueNAS: Pool-Usage-Bars neben den Stats
-  - OPNsense: Firewall-Regeln + Traffic in einer Zeile
+  - Emby: Medien-Karussell mit Cover-Bildern (Referenz-Widget)
+  - Smart-Home: 4-6 Sensor-Cards kompakt nebeneinander
+  - NAS-Service: Pool-Usage-Bars neben den Stats
+  - Firewall: Regeln + Traffic in einer Zeile
 
 ## 2x2 (Gross) - Nur bei klarem visuellem Mehrwert
 
@@ -350,10 +351,10 @@ Verwende 2x2 wenn:
 - **Entity-Grids** mit vielen Eintraegen dargestellt werden sollen
 - Der Service genug Daten fuer den grossen Bereich liefert
 - Beispiele:
-  - Home Assistant: 6 Entity-Cards im Grid mit Icons und Farben
-  - TrueNAS: Pool-Liste + Kreisdiagramm + Uptime-Visualisierung
-  - Unraid: Docker-Container-Liste + Disk-Usage-Balken
-  - Teslamate: Ladezustand + Reichweite + Fahrtenhistorie
+  - Emby: Medien-Karussell mit Cover, Bewertungen, Beschreibungen (Referenz-Widget)
+  - Smart-Home: Entity-Cards im Grid mit Icons und Farben
+  - NAS-Service: Pool-Liste + Kreisdiagramm + Uptime-Visualisierung
+  - Firewall: Interface-Stats + Traffic-Graph + Threat Map
 
 ## Goldene Regel
 
@@ -372,7 +373,7 @@ Hat der Service <= 3 Schluesselmetriken?
          +-- Nein --> 1x1 + 2x1 (detailed Layout)
          +-- Ja
               |
-              Braucht die Visualisierung viel Platz (> 140px)?
+              Braucht die Visualisierung viel Platz (> 160px)?
                 +-- Nein --> 1x1 + 2x1 (widget Layout)
                 +-- Ja ----> 1x1 + 2x1 + 2x2 (widget Layout)
 \`\`\`

@@ -116,7 +116,6 @@ function generatePluginCode(params: {
   } = params;
 
   const pascalName = toPascalCase(name.replace(/\s+/g, ""));
-  const varName = `${id.replace(/-/g, "")}Plugin`;
 
   const visibleStatsConditions = statOptions
     .map(
@@ -196,10 +195,18 @@ function generatePluginCode(params: {
 `
     : "";
 
+  const widgetImportLine = hasWidget
+    ? `import { ${pascalName}Widget } from "./${pascalName}Widget";\n`
+    : "";
+
+  const widgetExports = hasWidget
+    ? `\n// PFLICHT fuer Auto-Discovery:\nexport const widget = ${pascalName}Widget;\nexport const widgetName = "${pascalName}Widget";\n`
+    : `\n// PFLICHT fuer Auto-Discovery:\nexport const widget = null;\nexport const widgetName = null;\n`;
+
   return `import type { AppPlugin, PluginConfig, PluginStats, StatItem } from "../../types";
 import { getVisibleStats, normalizeUrl, createErrorResponse, createFetchOptions } from "../../utils";
-
-export const ${varName}: AppPlugin = {
+${widgetImportLine}
+export const plugin: AppPlugin = {
   metadata: {
     id: "${id}",
     name: "${name}",
@@ -290,7 +297,7 @@ ${visibleStatsConditions}
     }
   },${crawlerSection}
 };
-`;
+${widgetExports}`;
 }
 
 function generateWidgetCode(params: {
@@ -452,73 +459,58 @@ function generateRegistrationSteps(params: {
   hasWidget: boolean;
 }): string {
   const { pluginId, pluginName, hasWidget } = params;
-  const varName = `${pluginId.replace(/-/g, "")}Plugin`;
   const pascalName = toPascalCase(pluginName.replace(/\s+/g, ""));
   const widgetName = `${pascalName}Widget`;
 
   const steps: string[] = [];
 
-  // Step 1: Plugin file
-  steps.push(`## Schritt 1: Plugin-Datei erstellen
+  // Step 1: Plugin folder + file
+  steps.push(`## Schritt 1: Plugin-Ordner anlegen
 
+**Ordner:** \`src/plugins/community/${pluginId}/\`
 **Datei:** \`src/plugins/community/${pluginId}/index.ts\`
 
 Die Plugin-Datei wird mit \`scaffold_plugin\` generiert.
-Stelle sicher, dass sie Shared Utilities importiert:
+Der Ordnername MUSS mit \`metadata.id\` uebereinstimmen.
 
+Pflicht-Exports in index.ts:
 \`\`\`typescript
-import { getVisibleStats, normalizeUrl, createErrorResponse, createFetchOptions } from "../../utils";
+export const plugin: AppPlugin = { ... };    // Plugin-Definition
+export const widget = ${hasWidget ? widgetName : "null"};${" ".repeat(hasWidget ? 1 : 16)}// Widget-Komponente oder null
+export const widgetName = ${hasWidget ? `"${widgetName}"` : "null"};${" ".repeat(hasWidget ? 1 : 10)}// Widget-Name oder null
 \`\`\`
 `);
 
-  // Step 2: Export + Array entry in community/index.ts
-  steps.push(`## Schritt 2: Export und Registrierung in community/index.ts
-
-**Datei:** \`src/plugins/community/index.ts\`
-
-Fuege den Export und Array-Eintrag hinzu:
-
-\`\`\`typescript
-// Im Export-Bereich:
-export { ${varName} } from "./${pluginId}";
-
-// Im communityPlugins Array:
-export const communityPlugins: AppPlugin[] = [
-  // ... bestehende Plugins ...
-  ${varName},
-];
-\`\`\`
-`);
-
-  // Step 3: Widget registration in community/index.ts (optional)
+  // Step 2: Widget file (if applicable)
   if (hasWidget) {
-    steps.push(`## Schritt 3: Widget in communityWidgets registrieren
+    steps.push(`## Schritt 2: Widget-Datei erstellen
 
-**Datei:** \`src/plugins/community/index.ts\`
+**Datei:** \`src/plugins/community/${pluginId}/${widgetName}.tsx\`
 
-Fuege den Widget-Export und Map-Eintrag hinzu:
-
-\`\`\`typescript
-// Im Export-Bereich:
-export { ${widgetName} } from "./${pluginId}/${widgetName}";
-
-// In der communityWidgets Map:
-export const communityWidgets: Record<string, ComponentType<unknown>> = {
-  // ... bestehende Widgets ...
-  "${widgetName}": ${widgetName},
-};
-\`\`\`
-
-Die Widget-Registry importiert \`communityWidgets\` automatisch.
+Die Widget-Datei wird mit \`scaffold_widget\` generiert.
+Das Widget liegt im GLEICHEN Ordner wie das Plugin (nicht in \`src/components/widgets/\`).
 `);
   }
 
+  // Step 3: Server restart
+  steps.push(`## Schritt ${hasWidget ? "3" : "2"}: Server neustarten
+
+\`\`\`bash
+npm run dev    # Dev-Server (Auto-Discovery laeuft automatisch)
+npm run build  # Production Build
+\`\`\`
+
+**Keine weiteren Dateien bearbeiten!** Das Plugin wird automatisch erkannt.
+`);
+
   steps.push(`## Hinweise
 
+- **Kein \`community/index.ts\` bearbeiten** - Wird automatisch generiert
 - **Kein \`registry.ts\` bearbeiten** - Community Plugins werden automatisch importiert
 - **Kein \`icons.ts\` bearbeiten** - Icons werden automatisch aus \`metadata.icon\` aufgeloest
 - **Kein \`widgets/registry.ts\` bearbeiten** - Community Widgets werden automatisch registriert
-- **Icon-Slug pruefen** auf https://simpleicons.org (PascalCase, z.B. "Truenas", "Emby")
+- **Icon-Slug pruefen** auf https://simpleicons.org (PascalCase, z.B. "Emby", "Grafana")
+- **Ordnername = Plugin-ID** in \`metadata.id\` (kebab-case)
 `);
 
   return `# Registrierungs-Schritte fuer ${pluginName}
@@ -526,9 +518,10 @@ Die Widget-Registry importiert \`communityWidgets\` automatisch.
 ${steps.join("\n---\n\n")}
 ## Zusammenfassung
 
-Betroffene Dateien:
-1. \`src/plugins/community/${pluginId}/index.ts\` (Plugin-Datei, neu)
-2. \`src/plugins/community/index.ts\` (Export + Array-Eintrag${hasWidget ? " + communityWidgets" : ""})${hasWidget ? `\n3. \`src/components/widgets/${pluginId}/${widgetName}.tsx\` (Widget-Datei, neu)` : ""}
+Betroffene Dateien (nur im eigenen Plugin-Ordner):
+1. \`src/plugins/community/${pluginId}/index.ts\` (Plugin + Exports)${hasWidget ? `\n2. \`src/plugins/community/${pluginId}/${widgetName}.tsx\` (Widget-Komponente)` : ""}
+
+Sonst nichts. Ordner ablegen, Server neustarten, fertig.
 `;
 }
 
@@ -605,7 +598,7 @@ export function registerScaffoldTools(server: McpServer): void {
         content: [
           {
             type: "text" as const,
-            text: `# Generierte Plugin-Datei: src/plugins/community/${params.id}/index.ts\n\n\`\`\`typescript\n${code}\`\`\`\n\n**Naechste Schritte:**\n1. Datei erstellen unter \`src/plugins/community/${params.id}/index.ts\`\n2. TODO-Kommentare im Code abarbeiten (API-Endpoints, Auth-Header, Markenfarbe)\n3. \`get_registration_steps\` aufrufen fuer die Registrierung in community/index.ts`,
+            text: `# Generierte Plugin-Datei: src/plugins/community/${params.id}/index.ts\n\n\`\`\`typescript\n${code}\`\`\`\n\n**Naechste Schritte:**\n1. Ordner erstellen: \`src/plugins/community/${params.id}/\`\n2. Datei erstellen: \`index.ts\` mit dem generierten Code\n3. TODO-Kommentare im Code abarbeiten (API-Endpoints, Auth-Header, Markenfarbe)\n4. Server neustarten — Plugin wird automatisch erkannt`,
           },
         ],
       };
@@ -655,7 +648,7 @@ export function registerScaffoldTools(server: McpServer): void {
         content: [
           {
             type: "text" as const,
-            text: `# Generierte Widget-Datei: src/components/widgets/${pluginId}/${widgetName}.tsx\n\n\`\`\`tsx\n${code}\`\`\`\n\n**Naechste Schritte:**\n1. Datei erstellen unter \`src/components/widgets/${pluginId}/${widgetName}.tsx\`\n2. TODO: Lucide-Icon im WidgetHeader anpassen (statt "Activity")\n3. Widget in \`communityWidgets\` Map in \`src/plugins/community/index.ts\` eintragen\n4. Sicherstellen dass \`renderHints.widgetComponent\` im Plugin auf "${widgetName}" gesetzt ist`,
+            text: `# Generierte Widget-Datei: src/plugins/community/${pluginId}/${widgetName}.tsx\n\n\`\`\`tsx\n${code}\`\`\`\n\n**Naechste Schritte:**\n1. Datei erstellen unter \`src/plugins/community/${pluginId}/${widgetName}.tsx\`\n2. TODO: Lucide-Icon im WidgetHeader anpassen (statt "Activity")\n3. In der Plugin \`index.ts\`: \`export const widget = ${widgetName};\` und \`export const widgetName = "${widgetName}";\`\n4. Sicherstellen dass \`renderHints.widgetComponent\` im Plugin auf "${widgetName}" gesetzt ist`,
           },
         ],
       };
@@ -665,7 +658,7 @@ export function registerScaffoldTools(server: McpServer): void {
   // ── get_registration_steps ────────────────────────────────────────────
   server.tool(
     "get_registration_steps",
-    "Returns the exact code changes needed to register a new community plugin in the Dominion Dashboard: export in community/index.ts, communityPlugins array entry, and optional communityWidgets entry. No core files need editing.",
+    "Returns the steps to register a new community plugin in the Dominion Dashboard. Plugins are auto-discovered: just drop the folder in community/, export plugin/widget/widgetName, and restart the server.",
     {
       pluginId: z.string().describe("Plugin ID in kebab-case"),
       pluginName: z.string().describe("Plugin display name"),

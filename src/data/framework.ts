@@ -21,10 +21,11 @@ Beide implementieren das gleiche \`AppPlugin\` Interface.
   Metadaten, Konfigurationsfelder, Statistik-Optionen und Laufzeit-Funktionen
   exportiert. Plugins werden beim Start ueber die Registry validiert und registriert.
 
-- **Community-System:** Neue Plugins werden als Community Plugins erstellt.
-  Workflow: Ordner anlegen in \`src/plugins/community/my-plugin/\`, Export +
-  Array-Eintrag in \`src/plugins/community/index.ts\` hinzufuegen - fertig.
-  Keine weiteren Core-Dateien muessen bearbeitet werden.
+- **Community-System (Auto-Discovery):** Neue Plugins werden als Community Plugins
+  erstellt. Workflow: Ordner anlegen in \`src/plugins/community/my-plugin/\` mit
+  standardisierten Exports (\`plugin\`, \`widget\`, \`widgetName\`) - Server neustarten -
+  fertig. Das Plugin wird automatisch erkannt. Keine Core-Dateien bearbeiten,
+  keine Barrel-Dateien editieren, kein Build-Script ausfuehren.
 
 - **Shared Utilities:** Gemeinsame Hilfsfunktionen in \`src/plugins/utils.ts\`:
   \`getVisibleStats\`, \`normalizeUrl\`, \`createErrorResponse\`, \`createFetchOptions\`,
@@ -70,16 +71,11 @@ src/plugins/
   validator.ts          # Laufzeit-Validierung (validatePlugin + validateStats)
   utils.ts              # Shared Utilities (getVisibleStats, normalizeUrl, etc.)
   builtin/              # Builtin Plugins (vom Projekt mitgeliefert)
-    truenas/index.ts
-    emby/index.ts
-    homeassistant/
-    opnsense/index.ts
-    unraid/index.ts
-    teslamate/index.ts
-    jdownloader/index.ts
-    filemover/index.ts
-  community/            # Community Plugins (von externen Entwicklern)
-    index.ts            # Barrel-Datei: Exports + communityPlugins Array + communityWidgets Map
+    emby/index.ts       # Referenz-Implementation (einziges Builtin)
+  community/            # Community Plugins (von externen Entwicklern, Auto-Discovery)
+    index.ts            # AUTO-GENERATED: wird beim Start/Build automatisch generiert
+    {plugin-id}/        # Ein Ordner pro Plugin (Ordnername = metadata.id)
+      index.ts          # Pflicht-Exports: plugin, widget, widgetName
 
 src/components/widgets/
   registry.ts           # Widget-Registry (registerWidget/getWidget + auto-import communityWidgets)
@@ -89,10 +85,7 @@ src/components/widgets/
     SparklineChart.tsx   # Mini-Liniendiagramm
     HorizontalProgressBar.tsx
     ControlButton.tsx
-  emby/EmbyWidget.tsx
-  truenas/TrueNASWidget.tsx
-  unraid/UnraidWidget.tsx
-  homeassistant/HomeAssistantWidget.tsx
+  emby/EmbyWidget.tsx   # Referenz-Widget (einziges Builtin-Widget)
 \`\`\`
 
 ## API-Endpunkte
@@ -132,16 +125,12 @@ src/components/widgets/
 
 \`\`\`typescript
 // registry.ts - Registrierungsprozess
-import { truenasPlugin } from "./builtin/truenas";
 import { embyPlugin } from "./builtin/emby";
-// ... weitere Builtin-Imports
 
 import { communityPlugins } from "./community";
 
 const builtinPlugins: AppPlugin[] = [
-  truenasPlugin,
   embyPlugin,
-  // ... weitere Builtin-Plugins
 ];
 
 const registry = new Map<string, AppPlugin>();
@@ -203,7 +192,7 @@ for (const plugin of registry.values()) {
 |                                                                   |
 |  +---------------+    +---------------+    +-------------------+  |
 |  |   registry    |--->|   plugin      |--->|  fetchStats()     |  |
-|  |  getPlugin()  |    |  (truenas,    |    |  -> fetch ext API |  |
+|  |  getPlugin()  |    |  (emby,       |    |  -> fetch ext API |  |
 |  |               |    |   emby, ...)  |    |  -> parse JSON    |  |
 |  +---------------+    +---------------+    |  -> build items   |  |
 |                                            +---------+---------+  |
@@ -242,7 +231,7 @@ for (const plugin of registry.values()) {
 ### Schluessel-Details:
 
 1. **Plugin -> Externe API:** \`fetchStats()\` macht echte HTTP-Aufrufe zum Ziel-Service
-   (z.B. TrueNAS API). Diese laufen serverseitig - keine CORS-Probleme,
+   (z.B. Emby API). Diese laufen serverseitig - keine CORS-Probleme,
    API-Keys bleiben im Server-Prozess.
 
 2. **Validator-Schutzschicht:** \`validateStats()\` ist die Sicherheitsbarriere:
@@ -310,7 +299,7 @@ Tile-Konfiguration wird als JSON-String in der SQLite Datenbank gespeichert:
 // Prisma Tile Model (relevante Felder)
 {
   type: "standard" | "enhanced",
-  enhancedType: string | null,     // Plugin-ID, z.B. "truenas"
+  enhancedType: string | null,     // Plugin-ID, z.B. "emby"
   enhancedConfig: string | null,   // JSON-String: { apiUrl, apiKey, visibleStats, ... }
   columnSpan: number,              // 1 oder 2
   rowSpan: number,                 // 1 oder 2
@@ -341,7 +330,7 @@ interface PluginStats {
 
 - **App-Icons:** Kommen von \`simple-icons\` (simpleicons.org).
   Das \`metadata.icon\` Feld enthaelt den simple-icons Slug (PascalCase),
-  z.B. \`"Truenas"\`, \`"Emby"\`, \`"Homeassistant"\`.
+  z.B. \`"Emby"\`, \`"Opnsense"\`, \`"Grafana"\`.
   **Kein manuelles Mapping noetig!** Die Registry baut beim Start automatisch
   eine Icon-Map aus allen registrierten Plugins. \`src/lib/icons.ts\` hat nur
   noch eine \`FOUNDATION_ICON_MAP\` fuer nicht-Plugin Apps (z.B. Plex, Sonarr).
@@ -375,9 +364,9 @@ Der Entwickler bestimmt nur, welche Daten und Visualisierungen darin erscheinen.
 ## Was der Entwickler kontrolliert:
 
 ### 1. Metadata (\`metadata: PluginMetadata\`)
-- \`id\`: Eindeutiger Identifier (lowercase, z.B. "truenas", "emby")
-- \`name\`: Anzeigename (z.B. "TrueNAS", "Emby")
-- \`icon\`: simple-icons Slug (z.B. "Truenas") - muss auf simpleicons.org existieren
+- \`id\`: Eindeutiger Identifier (lowercase, z.B. "emby", "opnsense")
+- \`name\`: Anzeigename (z.B. "Emby", "OPNsense")
+- \`icon\`: simple-icons Slug (z.B. "Emby") - muss auf simpleicons.org existieren
 - \`color\`: Hex-Farbe der App (z.B. "#0095d5") - muss \`#XXXXXX\` Format sein
 - \`description\`: Deutsche Kurzbeschreibung (z.B. "Zeigt an: Speicher-Belegung, freier Platz, System-Uptime")
 - \`category\`: Eine von: Storage, Media, Network, Automation, System, Monitoring, Downloads, Security, Productivity, Development, Custom
@@ -439,18 +428,24 @@ Der Entwickler bestimmt nur, welche Daten und Visualisierungen darin erscheinen.
 - Deutsche Fehlermeldungen
 
 ### 9. Optional: crawlEntities (\`crawlEntities?(config) -> Promise<{ groups: CrawlEntityGroup[] }>\`)
-- Nur fuer Services mit vielen waehlbaren Entities (z.B. Home Assistant)
+- Nur fuer Services mit vielen waehlbaren Entities (z.B. Smart-Home-Systeme)
 - Gibt gruppierte Entity-Liste zurueck fuer den Entity-Picker im TileDialog
 - Jede Gruppe: \`{ domain, label, icon, entities: [{ id, name, state }] }\`
 
 ### 10. Optional: Widget-Komponente
-- React-Komponente in \`src/components/widgets/{id}/{Name}Widget.tsx\`
+- React-Komponente im Plugin-Ordner: \`src/plugins/community/{id}/{Name}Widget.tsx\`
 - \`"use client"\` Direktive am Anfang
 - Empfaengt WidgetProps: \`{ stats, config, tileId, size, onAction? }\`
 - MUSS 3 States handlen: loading, error, ok (Daten vorhanden)
 - **Builtin Widgets:** Registrierung in \`src/components/widgets/registry.ts\`
-- **Community Widgets:** Export in \`communityWidgets\` Map in \`src/plugins/community/index.ts\`
-  (werden automatisch von der Widget-Registry importiert und registriert)
+- **Community Widgets:** Export als \`widget\` und \`widgetName\` in der Plugin \`index.ts\`
+  (werden automatisch per Auto-Discovery erkannt und registriert)
+
+### 11. Pflicht-Exports fuer Community Plugins (Auto-Discovery)
+- \`export const plugin: AppPlugin = { ... }\` — MUSS genau \`plugin\` heissen
+- \`export const widget = MeinWidget;\` oder \`export const widget = null;\`
+- \`export const widgetName = "MeinWidget";\` oder \`export const widgetName = null;\`
+- Alle drei Exports sind PFLICHT, auch wenn widget/widgetName null sind
 
 ---
 
@@ -467,7 +462,7 @@ Der Entwickler bestimmt nur, welche Daten und Visualisierungen darin erscheinen.
 ### Interaktion (System handhabt alle Events)
 - **Drag & Drop:** Sortierung der Tiles per @dnd-kit/react (useSortable)
 - **Click-Handler:** Oeffnet die App-URL in neuem Tab (\`window.open\`)
-- **Responsive Grid:** Automatische Spaltenanpassung (5 -> 3 -> 2 Spalten)
+- **Responsive Grid:** Automatische Spaltenanpassung (6 -> 4 -> 2 Spalten)
 
 ### Daten-Management (System handhabt den gesamten Datenfluss)
 - **Polling-Loop:** 30-Sekunden-Intervall via setInterval in EnhancedTile

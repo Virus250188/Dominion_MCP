@@ -270,19 +270,40 @@ function testPluginExport(pluginId: string): ExportResult {
     detail: `Read ${content.length} characters from ${pluginIndexPath}`,
   });
 
-  // 2. Has a named export (const {something}Plugin)
-  const exportMatch = content.match(/export\s+const\s+(\w+Plugin)\s*[=:]/);
-  if (exportMatch) {
+  // 2. Has standardized export (export const plugin: AppPlugin)
+  const hasPluginExport = /export\s+const\s+plugin\s*[=:]/.test(content);
+  // Also accept legacy {name}Plugin export for builtin plugins
+  const legacyExportMatch = content.match(/export\s+const\s+(\w+Plugin)\s*[=:]/);
+  if (hasPluginExport) {
     checks.push({
-      check: "Has named plugin export",
+      check: "Has standardized plugin export",
       passed: true,
-      detail: `Found export: ${exportMatch[1]}`,
+      detail: 'Found `export const plugin` (Auto-Discovery compatible)',
+    });
+  } else if (legacyExportMatch) {
+    checks.push({
+      check: "Has standardized plugin export",
+      passed: true,
+      detail: `Found legacy export: ${legacyExportMatch[1]} (builtin format)`,
     });
   } else {
     checks.push({
-      check: "Has named plugin export",
+      check: "Has standardized plugin export",
       passed: false,
-      detail: 'No `export const ...Plugin` found. Expected pattern: `export const {name}Plugin: AppPlugin = { ... }`',
+      detail: 'No `export const plugin` found. Community plugins must export: `export const plugin: AppPlugin = { ... }`',
+    });
+  }
+
+  // 2b. Community plugins: check for widget and widgetName exports
+  if (fileExists(communityPath)) {
+    const hasWidgetExport = /export\s+const\s+widget\s*[=]/.test(content);
+    const hasWidgetNameExport = /export\s+const\s+widgetName\s*[=]/.test(content);
+    checks.push({
+      check: "Has widget/widgetName exports (Auto-Discovery)",
+      passed: hasWidgetExport && hasWidgetNameExport,
+      detail: hasWidgetExport && hasWidgetNameExport
+        ? "Found `export const widget` and `export const widgetName` (can be null)"
+        : `Missing: ${!hasWidgetExport ? "export const widget" : ""}${!hasWidgetExport && !hasWidgetNameExport ? " and " : ""}${!hasWidgetNameExport ? "export const widgetName" : ""}. Both are required (use null if no widget).`,
     });
   }
 
@@ -366,7 +387,7 @@ export function registerTestTools(server: McpServer): void {
     "test_plugin_files",
     "Checks if all required files for a plugin exist in the Dashboard project: index.ts in community/ or builtin/, export in community/index.ts (or registry.ts for builtin), and widget files if applicable. Icons are auto-resolved, no ICON_MAP check needed.",
     {
-      pluginId: z.string().describe("The plugin ID (kebab-case), e.g. 'truenas', 'home-assistant'."),
+      pluginId: z.string().describe("The plugin ID (kebab-case), e.g. 'emby', 'opnsense'."),
     },
     async ({ pluginId }) => {
       const checklist = testPluginFiles(pluginId);
@@ -402,7 +423,7 @@ export function registerTestTools(server: McpServer): void {
     "test_plugin_export",
     "Performs static analysis on a plugin's index.ts file to verify it has the correct export shape, required fields, async methods, shared utility usage, and no deprecated features field.",
     {
-      pluginId: z.string().describe("The plugin ID (kebab-case), e.g. 'truenas', 'emby'."),
+      pluginId: z.string().describe("The plugin ID (kebab-case), e.g. 'emby', 'opnsense'."),
     },
     async ({ pluginId }) => {
       const exportResult = testPluginExport(pluginId);

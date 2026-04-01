@@ -13,11 +13,12 @@ export const PATTERNS = {
 import type { AppPlugin, PluginConfig, PluginStats } from "../../types";
 import { getVisibleStats, normalizeUrl, createErrorResponse, createFetchOptions } from "../../utils";
 
-export const meinPlugin: AppPlugin = {
+// PFLICHT: Genau "plugin" als Export-Name (fuer Auto-Discovery)
+export const plugin: AppPlugin = {
   metadata: {
-    id: string,           // lowercase, z.B. "truenas", "emby"
-    name: string,         // Anzeigename, z.B. "TrueNAS", "Emby"
-    icon: string,         // simple-icons Slug, z.B. "Truenas", "Emby"
+    id: string,           // lowercase, z.B. "emby", "opnsense" (= Ordnername!)
+    name: string,         // Anzeigename, z.B. "Emby", "OPNsense"
+    icon: string,         // simple-icons Slug, z.B. "Emby", "Opnsense"
     color: string,        // Hex-Farbe, z.B. "#0095d5" (MUSS #XXXXXX Format)
     description: string,  // Kurzbeschreibung auf Deutsch
     category: PluginCategory,  // "Storage" | "Media" | "Network" | "Automation" |
@@ -38,6 +39,10 @@ export const meinPlugin: AppPlugin = {
   // Optional:
   async crawlEntities?(config: PluginConfig): Promise<{ groups: CrawlEntityGroup[] }> { ... },
 };
+
+// PFLICHT fuer Auto-Discovery (auch wenn null):
+export const widget = MeinWidget;        // oder null
+export const widgetName = "MeinWidget";  // oder null
 \`\`\`
 
 ## Typ-Definitionen
@@ -47,7 +52,7 @@ export const meinPlugin: AppPlugin = {
 interface PluginMetadata {
   id: string;            // Plugin-ID (kebab-case, muss Registry-weit eindeutig sein)
   name: string;          // Anzeigename (wird im TileDialog und Katalog gezeigt)
-  icon: string;          // simple-icons Slug mit Grossbuchstabe (z.B. "Truenas")
+  icon: string;          // simple-icons Slug mit Grossbuchstabe (z.B. "Emby")
   color: string;         // Hex-Farbe (#XXXXXX) - wird als App-Farbe verwendet
   description: string;   // Kurzbeschreibung auf Deutsch (z.B. "Zeigt an: ...")
   category: PluginCategory;  // Kategorie fuer die Sortierung im Katalog
@@ -59,9 +64,9 @@ interface PluginMetadata {
 \`\`\`typescript
 interface ConfigField {
   key: string;          // Config-Key (z.B. "apiUrl", "apiKey", "accessToken")
-  label: string;        // Formular-Label auf Deutsch (z.B. "TrueNAS URL")
+  label: string;        // Formular-Label auf Deutsch (z.B. "Emby Server URL")
   type: "text" | "password" | "url" | "textarea" | "select" | "number";
-  placeholder?: string; // Platzhaltertext (z.B. "http://truenas.local")
+  placeholder?: string; // Platzhaltertext (z.B. "http://emby.local:8096")
   required?: boolean;   // Pflichtfeld? (apiUrl ist fast immer required)
   description?: string; // Hilfetext auf Deutsch unter dem Feld
   options?: { label: string; value: string }[];  // Nur fuer type: "select"
@@ -141,37 +146,37 @@ configFields: [
 ],
 \`\`\`
 
-### Muster 2: URL + Access Token (z.B. Home Assistant)
+### Muster 2: URL + Access Token (z.B. Smart-Home Services)
 \`\`\`typescript
 configFields: [
   {
     key: "apiUrl",
-    label: "Home Assistant URL",
+    label: "Server URL",
     type: "url",
-    placeholder: "http://homeassistant.local:8123",
+    placeholder: "http://service.local:8123",
     required: true,
-    description: "Die URL deiner Home Assistant Instanz",
+    description: "Die URL deiner Service-Instanz",
   },
   {
     key: "accessToken",
     label: "Long-Lived Access Token",
     type: "password",
     required: true,
-    description: "Erstelle einen Token unter Profil → Langlebige Zugangstoken",
+    description: "Erstelle einen Token in den Service-Einstellungen",
   },
 ],
 \`\`\`
 
-### Muster 3: URL + Username + Password (z.B. JDownloader)
+### Muster 3: URL + Username + Password (z.B. Download-Manager)
 \`\`\`typescript
 configFields: [
   {
     key: "apiUrl",
-    label: "JDownloader URL",
+    label: "Service URL",
     type: "url",
-    placeholder: "http://jdownloader.local:3129",
+    placeholder: "http://service.local:3129",
     required: true,
-    description: "Die URL deines JDownloader",
+    description: "Die URL deines Services",
   },
   {
     key: "username",
@@ -477,10 +482,10 @@ function EmbyWidget2x2({ stats }: WidgetProps) {
   fetchStatsPattern: `
 # fetchStats Implementation Pattern
 
-## Komplettes Beispiel (orientiert an echtem TrueNAS Plugin)
+## Komplettes Beispiel (basierend auf dem Emby Referenz-Plugin)
 
 \`\`\`typescript
-import { getVisibleStats, normalizeUrl, createErrorResponse, createFetchOptions, formatBytes, formatUptime } from "../../utils";
+import { getVisibleStats, normalizeUrl, createErrorResponse, createFetchOptions } from "../../utils";
 
 async fetchStats(config: PluginConfig): Promise<PluginStats> {
   try {
@@ -489,61 +494,51 @@ async fetchStats(config: PluginConfig): Promise<PluginStats> {
 
     // 2. Basis-URL normalisieren (Shared Utility)
     const baseUrl = normalizeUrl(config.apiUrl);
+    const apiKey = String(config.apiKey || "");
 
     // 3. Auth-Header vorbereiten
-    const headers: Record<string, string> = {
-      "Content-Type": "application/json",
-      Authorization: \\\`Bearer \\\${String(config.apiKey || "")}\\\`,
-    };
+    const headers: HeadersInit = { "X-Emby-Token": apiKey };
+    const fetchOpts = { ...createFetchOptions(8000), headers };
 
     // 4. Mehrere Endpoints PARALLEL abfragen (Promise.all)
-    const [poolsRes, infoRes] = await Promise.all([
-      fetch(\\\`\\\${baseUrl}/api/v2.0/pool\\\`, { ...createFetchOptions(), headers }),
-      fetch(\\\`\\\${baseUrl}/api/v2.0/system/info\\\`, { ...createFetchOptions(), headers }),
+    const [sessionsRes, countsRes] = await Promise.all([
+      fetch(\\\`\\\${baseUrl}/Sessions\\\`, fetchOpts),
+      fetch(\\\`\\\${baseUrl}/Items/Counts\\\`, fetchOpts),
     ]);
 
-    // 5. HTTP-Status pruefen
-    if (!poolsRes.ok) throw new Error(\\\`Pools: HTTP \\\${poolsRes.status}\\\`);
-    if (!infoRes.ok) throw new Error(\\\`Info: HTTP \\\${infoRes.status}\\\`);
-
-    // 6. JSON parsen
-    const pools = await poolsRes.json();
-    const info = await infoRes.json();
-
-    // 7. Stats sammeln (NUR sichtbare, Reihenfolge = Prioritaet)
+    // 5. Stats sammeln (NUR sichtbare, Reihenfolge = Prioritaet)
     const items: StatItem[] = [];
 
-    if (visibleStats.includes("usage")) {
-      const usedPercent = Math.round((totalUsed / totalSize) * 100);
+    if (visibleStats.includes("streams") && sessionsRes.ok) {
+      const sessions = await sessionsRes.json();
+      const active = Array.isArray(sessions)
+        ? sessions.filter((s: { NowPlayingItem?: unknown }) => s.NowPlayingItem)
+        : [];
       items.push({
-        label: "Belegt",
-        value: \\\`\\\${usedPercent}%\\\`,
-        color: usedPercent > 85 ? "red" : usedPercent > 70 ? "yellow" : "green",
+        label: "Streams",
+        value: active.length,
+        color: active.length > 0 ? "green" : undefined,
       });
     }
 
-    if (visibleStats.includes("free")) {
-      items.push({
-        label: "Frei",
-        value: formatBytes(totalSize - totalUsed),
-      });
+    if (countsRes.ok) {
+      const counts = await countsRes.json();
+      if (visibleStats.includes("movies")) {
+        items.push({ label: "Filme", value: counts.MovieCount ?? 0 });
+      }
+      if (visibleStats.includes("series")) {
+        items.push({ label: "Serien", value: counts.SeriesCount ?? 0 });
+      }
     }
 
-    if (visibleStats.includes("uptime") && info.uptime_seconds) {
-      items.push({
-        label: "Uptime",
-        value: formatUptime(info.uptime_seconds),
-      });
-    }
-
-    // 8. Optional: widgetData fuer reichhaltige Widget-Daten
+    // 6. Optional: widgetData fuer reichhaltige Widget-Daten
     // Nur noetig wenn das Plugin ein Widget hat das mehr als Stats braucht
     // const widgetData = { recentItems: [...], carouselSpeed: 5000 };
 
-    // 9. Zurueckgeben (NICHT selbst slicen, Validator macht das)
+    // 7. Zurueckgeben (NICHT selbst slicen, Validator macht das)
     return { items, status: "ok" /* , widgetData */ };
   } catch (err) {
-    // 9. NIEMALS eine Exception werfen! Shared Utility fuer Error-Response.
+    // NIEMALS eine Exception werfen! Shared Utility fuer Error-Response.
     return createErrorResponse(err);
   }
 }
@@ -586,10 +581,10 @@ async testConnection(
   try {
     const baseUrl = normalizeUrl(config.apiUrl);
 
-    const res = await fetch(\\\`\\\${baseUrl}/api/v2.0/system/info\\\`, {
+    const res = await fetch(\\\`\\\${baseUrl}/System/Info/Public\\\`, {
       ...createFetchOptions(),
       headers: {
-        Authorization: \\\`Bearer \\\${String(config.apiKey || "")}\\\`,
+        "X-Emby-Token": String(config.apiKey || ""),
       },
     });
 
@@ -603,7 +598,7 @@ async testConnection(
     // Erfolg: Zeige Service-Name oder Version
     return {
       ok: true,
-      message: \\\`Verbunden mit \\\${info.hostname || "TrueNAS"}\\\`,
+      message: \\\`Verbunden mit \\\${info.ServerName || "Service"} (v\\\${info.Version || "?"})\\\`,
     };
   } catch (err) {
     return { ok: false, message: (err as Error).message };
@@ -628,17 +623,12 @@ async testConnection(
 ## Typische Erfolgs-Nachrichten
 
 \`\`\`typescript
-// TrueNAS
-{ ok: true, message: "Verbunden mit truenas-server" }
-
-// Emby
+// Emby (Referenz-Plugin)
 { ok: true, message: "Verbunden mit MeinEmby (v4.8.0)" }
 
-// Home Assistant
-{ ok: true, message: "Verbunden mit Home Assistant (OK)" }
-
-// OPNsense
-{ ok: true, message: "Verbunden mit OPNsense (v24.7)" }
+// Generische Beispiele
+{ ok: true, message: "Verbunden mit mein-server" }
+{ ok: true, message: "Verbunden mit ServiceName (v2.1.0)" }
 \`\`\`
 
 ## Typische Fehler-Nachrichten
@@ -662,10 +652,10 @@ async testConnection(
 
 ## Wann NICHT implementieren?
 
-- Plugin hat feste Stats (z.B. TrueNAS: Pool-Belegung ist immer dieselbe)
+- Plugin hat feste Stats (z.B. Emby: Filme/Serien-Zaehler sind immer gleich)
 - Keine sinnvolle Entity-Auswahl moeglich
 
-## Komplettes Beispiel (orientiert an Home Assistant)
+## Komplettes Beispiel (generisches Pattern fuer Entity-basierte Services)
 
 \`\`\`typescript
 async crawlEntities(config: PluginConfig) {
@@ -1248,7 +1238,7 @@ return { items: [], status: "error", error: "Verbindung fehlgeschlagen" };
 
 \`\`\`typescript
 // FALSCH: Import aus einem anderen Plugin
-import { formatBytes } from "../truenas";
+import { formatBytes } from "../anderes-plugin";
 
 // RICHTIG: Shared Utilities importieren
 import { formatBytes, formatUptime } from "../../utils";
@@ -1363,7 +1353,7 @@ const processedItems = stats.items.map(item => ({  // Laeuft bei jedem Render!
 
 - [ ] Datei angelegt: \`src/plugins/community/{id}/index.ts\`
 - [ ] Shared Utilities importiert: \`import { getVisibleStats, normalizeUrl, createErrorResponse, createFetchOptions } from "../../utils";\`
-- [ ] \`metadata.id\` in lowercase (z.B. "truenas", "emby")
+- [ ] \`metadata.id\` in lowercase (z.B. "emby", "opnsense")
 - [ ] \`metadata.name\` als Anzeigename
 - [ ] \`metadata.icon\` als simple-icons Slug (auf simpleicons.org pruefen, PascalCase)
 - [ ] \`metadata.color\` als Hex-Wert (#XXXXXX)
@@ -1396,12 +1386,13 @@ const processedItems = stats.items.map(item => ({  // Laeuft bei jedem Render!
 - [ ] Fehler: \`{ ok: false, message: "HTTP {status}: Zugriff verweigert" }\`
 - [ ] Deutsche Fehlermeldungen
 
-## 4. Registrierung (NUR community/index.ts)
+## 4. Auto-Discovery Exports (Pflicht fuer Community Plugins)
 
-- [ ] Export in \`src/plugins/community/index.ts\` hinzugefuegt
-- [ ] Plugin im \`communityPlugins\` Array eingetragen
-- [ ] KEIN registry.ts bearbeiten (automatisch)
-- [ ] KEIN icons.ts bearbeiten (automatisch)
+- [ ] \`export const plugin: AppPlugin = { ... }\` (genau "plugin" als Name)
+- [ ] \`export const widget = MeinWidget;\` oder \`export const widget = null;\`
+- [ ] \`export const widgetName = "MeinWidget";\` oder \`export const widgetName = null;\`
+- [ ] Ordnername = \`metadata.id\` (kebab-case)
+- [ ] KEINE Dateien ausserhalb des eigenen Ordners bearbeiten
 
 ## 5. Optional: crawlEntities
 
@@ -1413,13 +1404,13 @@ const processedItems = stats.items.map(item => ({  // Laeuft bei jedem Render!
 
 ## 6. Optional: Widget-Komponente
 
-- [ ] Datei: \`src/components/widgets/{id}/{Name}Widget.tsx\`
+- [ ] Datei: \`src/plugins/community/{id}/{Name}Widget.tsx\` (im Plugin-Ordner!)
 - [ ] \`"use client"\` Direktive am Anfang
 - [ ] Alle 3 Zustaende: loading (Spinner), error (Fehlermeldung), ok (Inhalt)
 - [ ] \`WidgetHeader\` fuer konsistente Kopfzeile
 - [ ] Groessen-Varianten implementiert (2x1 und/oder 2x2)
-- [ ] Widget in \`communityWidgets\` Map in \`community/index.ts\` eingetragen
-- [ ] \`widgetComponent\` in renderHints stimmt mit communityWidgets Key ueberein
+- [ ] In index.ts: \`export const widget = MeinWidget;\` und \`export const widgetName = "MeinWidget";\`
+- [ ] \`widgetComponent\` in renderHints stimmt mit widgetName ueberein
 - [ ] KEINE eigenen API-Calls - nur stats Prop verwenden
 - [ ] widgetData aus stats.widgetData lesen (mit Type-Assertion und Fallback)
 - [ ] CSS-Transitions fuer Karussells/Uebergaenge (keine JS-Animationen)
