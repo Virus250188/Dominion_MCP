@@ -1275,6 +1275,59 @@ return { items: [stat1, stat2, stat3, stat4, stat5, stat6, stat7], status: "ok" 
 \`\`\`
 
 Maximal 6 Stats in der items-Liste. Reihenfolge = Prioritaet (wichtigste zuerst).
+
+## 11. Eigene API-Routes erstellen
+
+\`\`\`
+FALSCH: Plugin mit eigenen API-Routes
+spotify/
+  api/
+    auth/route.ts        <- VERBOTEN!
+    callback/route.ts    <- VERBOTEN!
+    status/route.ts      <- VERBOTEN!
+    action/route.ts      <- VERBOTEN!
+  plugin/
+    index.ts
+
+RICHTIG: Alles in einem Ordner, keine API-Routes
+spotify/
+  index.ts               <- Plugin-Definition mit fetchStats + testConnection
+  SpotifyWidget.tsx       <- Optional: Widget-Komponente
+\`\`\`
+
+Plugins erstellen KEINE eigenen \`/api/\` Routes. Das Enhanced App System hat
+genau DREI API-Endpunkte die vom System bereitgestellt werden:
+- \`GET /api/enhanced/[appId]\` - ruft \`fetchStats()\` auf
+- \`POST /api/enhanced/test\` - ruft \`testConnection()\` auf
+- \`POST /api/enhanced/crawl\` - ruft \`crawlEntities()\` auf
+
+OAuth, eigene Auth-Flows oder externe Callbacks gehoeren NICHT in ein Plugin.
+Wenn ein Service OAuth braucht, muss der API Key / Access Token manuell vom
+Benutzer in den configFields eingetragen werden (z.B. als Personal Access Token).
+
+## 12. Dateien ausserhalb des Plugin-Ordners erstellen
+
+\`\`\`
+FALSCH: Dateien ueber das Projekt verstreut
+src/plugins/community/mein-plugin/index.ts
+src/components/widgets/mein-plugin/Widget.tsx    <- VERBOTEN! (alter Pfad)
+src/app/api/mein-plugin/route.ts                 <- VERBOTEN!
+.env.example                                     <- VERBOTEN!
+
+RICHTIG: Alles in EINEM Ordner
+src/plugins/community/mein-plugin/
+  index.ts
+  MeinPluginWidget.tsx    <- Widget im GLEICHEN Ordner
+\`\`\`
+
+Ein Community Plugin darf NUR Dateien in seinem eigenen Ordner haben.
+Keine Aenderungen an Core-Dateien, keine neuen API-Routes, keine .env Dateien.
+
+## 13. Direkt ins Dashboard-Projekt schreiben
+
+Der Agent erstellt Plugin-Dateien in einem **separaten Arbeitsordner**, NICHT
+direkt im Dashboard-Repository. Am Ende wird der fertige Ordner als ZIP
+geliefert. Der Benutzer legt ihn dann selbst in \`src/plugins/community/\` ab.
 `,
 
   performanceRules: `

@@ -15,6 +15,20 @@ selbst-gehosteten Diensten anzeigen. Es gibt zwei Plugin-Kategorien:
 
 Beide implementieren das gleiche \`AppPlugin\` Interface.
 
+## WICHTIG: Arbeitsweise fuer AI Agents
+
+**NIEMALS direkt ins Dashboard-Projekt schreiben!** Der Agent erstellt alle
+Plugin-Dateien in einem **separaten Arbeitsordner** (z.B. \`Apps_enhanced/mein-plugin/\`).
+Am Ende wird der fertige Plugin-Ordner als ZIP geliefert oder manuell in
+\`src/plugins/community/\` abgelegt. Der Agent hat KEINEN Schreibzugriff auf
+das Dashboard-Repository.
+
+**Ein Plugin ist EIN Ordner** mit maximal 2-3 Dateien:
+- \`index.ts\` (Pflicht) — Plugin-Definition mit allen Exports
+- \`{Name}Widget.tsx\` (Optional) — Widget-Komponente
+- Sonst nichts. KEINE eigenen API-Routes, KEINE eigenen Ordnerstrukturen,
+  KEINE Dateien ausserhalb des Plugin-Ordners.
+
 ## Kernkonzepte
 
 - **Plugin-Architektur:** Jedes Plugin ist ein einzelnes TypeScript-Modul, das
@@ -22,10 +36,15 @@ Beide implementieren das gleiche \`AppPlugin\` Interface.
   exportiert. Plugins werden beim Start ueber die Registry validiert und registriert.
 
 - **Community-System (Auto-Discovery):** Neue Plugins werden als Community Plugins
-  erstellt. Workflow: Ordner anlegen in \`src/plugins/community/my-plugin/\` mit
-  standardisierten Exports (\`plugin\`, \`widget\`, \`widgetName\`) - Server neustarten -
-  fertig. Das Plugin wird automatisch erkannt. Keine Core-Dateien bearbeiten,
-  keine Barrel-Dateien editieren, kein Build-Script ausfuehren.
+  erstellt. Workflow: Plugin-Ordner bauen mit standardisierten Exports
+  (\`plugin\`, \`widget\`, \`widgetName\`) - Ordner in \`src/plugins/community/\` ablegen -
+  Server neustarten - fertig. Das Plugin wird automatisch erkannt.
+  Keine Core-Dateien bearbeiten, keine Barrel-Dateien editieren.
+
+- **KEINE eigenen API-Routes:** Plugins erstellen KEINE eigenen \`/api/\` Routes.
+  Alle Daten werden ueber \`fetchStats()\` geholt, das serverseitig laeuft.
+  Alle Aktionen laufen ueber den \`onAction\` Callback im Widget.
+  OAuth oder externe Auth-Flows gehoeren NICHT in ein Plugin.
 
 - **Shared Utilities:** Gemeinsame Hilfsfunktionen in \`src/plugins/utils.ts\`:
   \`getVisibleStats\`, \`normalizeUrl\`, \`createErrorResponse\`, \`createFetchOptions\`,
