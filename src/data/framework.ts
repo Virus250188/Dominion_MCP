@@ -7,6 +7,12 @@ export const FRAMEWORK = {
   overview: `
 # Enhanced App System - Uebersicht
 
+> **Nach diesem Overview unbedingt aufrufen:**
+> - \`get_widget_contract\` — Widget-Regeln, **Widget-Actions Pattern** (interaktive Controls wie Play/Pause), WidgetHeader
+> - \`get_tile_size_spec\` — Exakte Pixel-Dimensionen pro Tile-Groesse
+> - \`get_data_contracts\` — fetchStats Pattern, StatItem Format, Farb-Konventionen
+> Falls OAuth noetig: \`get_framework_overview\` enthaelt die OAuth-Architektur.
+
 Enhanced Apps sind Plugins fuer das **Dominion Dashboard**, die Live-Daten von
 selbst-gehosteten Diensten anzeigen. Es gibt zwei Plugin-Kategorien:
 
