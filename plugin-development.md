@@ -422,6 +422,56 @@ const data = stats.widgetData as {
 
 ---
 
+## Widget-Actions — Interaktive Controls
+
+Wenn dein Widget Buttons braucht (Play/Pause, Like, Toggle), ruft das Widget die externe API **direkt vom Browser** auf. Das Dashboard ist dabei nicht beteiligt.
+
+### Token-Weitergabe
+
+Das Plugin gibt den Token ueber `widgetData` weiter:
+
+```typescript
+// In fetchStats (serverseitig):
+return {
+  items,
+  status: "ok",
+  widgetData: {
+    accessToken: String(config.accessToken || ""),  // Token fuer Widget-Actions
+    isPlaying: playback?.is_playing,
+    deviceId: currentDevice?.id,
+  },
+};
+```
+
+### Actions im Widget
+
+```typescript
+// Im Widget (client-seitig):
+const data = stats.widgetData as { accessToken?: string; isPlaying?: boolean } | undefined;
+
+const handlePlayPause = async () => {
+  if (!data?.accessToken) return;
+  const action = data.isPlaying ? "pause" : "play";
+  try {
+    await fetch(`https://api.service.com/v1/player/${action}`, {
+      method: "PUT",
+      headers: { Authorization: `Bearer ${data.accessToken}` },
+    });
+  } catch {
+    // Fehler graceful handlen
+  }
+};
+```
+
+### Regeln
+
+- Token kommt ueber `widgetData`, NICHT ueber `config` (Sicherheit)
+- Das Plugin entscheidet bewusst welche Tokens es weitergibt
+- Fehler abfangen (try/catch), visuelles Feedback geben
+- `onAction` ist nur fuer Widget->Dashboard Signale (z.B. "Daten neu laden")
+
+---
+
 ## fetchStats — Daten liefern
 
 `fetchStats` wird alle 30 Sekunden vom Server aufgerufen. Du holst Daten von deiner API und gibst sie als `PluginStats` zurueck.

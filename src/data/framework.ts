@@ -48,8 +48,15 @@ entweder in \`src/plugins/community/\` ablegen ODER ueber
   Keine Core-Dateien bearbeiten, keine Barrel-Dateien editieren.
 
 - **KEINE eigenen API-Routes:** Plugins erstellen KEINE eigenen \`/api/\` Routes.
-  Alle Daten werden ueber \`fetchStats()\` geholt, das serverseitig laeuft.
-  Alle Aktionen laufen ueber den \`onAction\` Callback im Widget.
+  Daten-Fetching laeuft ueber \`fetchStats()\` (serverseitig, alle 30s).
+
+- **Widget-Actions (App macht es selbst):** Wenn ein Widget interaktive Controls
+  braucht (Play/Pause, Like, Device-Wechsel), ruft das Widget die externe API
+  **direkt vom Browser** auf. Das Dashboard ist dabei NICHT beteiligt.
+  Das Plugin gibt den \`accessToken\` ueber \`widgetData\` an das Widget weiter,
+  und das Widget macht \`fetch("https://api.service.com/action")\` selbst.
+  \`onAction\` bleibt als optionaler Callback fuer Widget->Dashboard Kommunikation
+  (z.B. "Daten neu laden"), aber die Service-Kommunikation macht die App direkt.
 
 - **OAuth-Support (Framework-Feature):** Fuer Services die OAuth brauchen
   (Spotify, GitHub, etc.) bietet das Framework einen eingebauten OAuth-Flow.
@@ -486,7 +493,17 @@ Der Entwickler bestimmt nur, welche Daten und Visualisierungen darin erscheinen.
 - \`export const widgetName = "MeinWidget";\` oder \`export const widgetName = null;\`
 - Alle drei Exports sind PFLICHT, auch wenn widget/widgetName null sind
 
-### 12. Plugin Manifest (\`plugin.manifest.json\`)
+### 12. Widget-Actions (direkte API-Calls vom Browser)
+- Fuer interaktive Widgets (Player-Controls, Toggles, Device-Wechsel)
+- Das Widget ruft die externe API **direkt vom Browser** auf (client-side fetch)
+- Das Plugin gibt den \`accessToken\` ueber \`widgetData\` in \`fetchStats\` weiter
+- Das Widget liest den Token aus \`stats.widgetData.accessToken\`
+- **KEIN Umweg ueber das Dashboard** — die App kontrolliert ihre eigene Kommunikation
+- \`onAction\` ist nur fuer Widget->Dashboard Signale (z.B. "refresh"), NICHT fuer API-Calls
+- **Sicherheit:** Das Plugin entscheidet bewusst welche Tokens es dem Widget mitgibt.
+  Nur OAuth-Tokens fuer den jeweiligen Service, keine Dashboard-internen Secrets.
+
+### 13. Plugin Manifest (\`plugin.manifest.json\`)
 - Pflichtfelder: \`id\`, \`name\`, \`version\` (semver), \`author\`, \`description\`
 - Optionale Felder: \`minDashboardVersion\`, \`hasWidget\`, \`widgetFile\`
 - \`id\` muss mit \`metadata.id\` und dem Ordnernamen uebereinstimmen

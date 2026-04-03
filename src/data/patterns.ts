@@ -994,7 +994,7 @@ Der Name muss EXAKT mit \`renderHints[size].widgetComponent\` uebereinstimmen.
 
 1. **\`"use client"\` ist Pflicht** - Widgets sind Client-Komponenten
 2. **Alle 3 Zustaende behandeln:** loading -> Spinner, error -> Fehlermeldung, ok -> Inhalt
-3. **KEINE eigenen API-Calls** - Daten kommen ausschliesslich ueber stats Prop
+3. **Daten ueber stats Prop** - Keine eigenen Daten-Calls (Actions direkt zum Service sind OK)
 4. **Groessen-Varianten via size Prop** - 2x1 (kompakt) vs 2x2 (voll)
 5. **WidgetHeader fuer einheitliches Aussehen** verwenden
 6. **Widget-Name muss mit renderHints.widgetComponent uebereinstimmen**
@@ -1194,10 +1194,10 @@ function MeinWidget2x2({ stats }: WidgetProps) {
 **Richtig:** Kein Widget erstellen. Stattdessen \`layout: "detailed"\` in renderHints verwenden.
 Widgets muessen visuellen Mehrwert bieten (Charts, Listen, Progress-Bars, Entity-Cards).
 
-## 2. Widget mit eigenen API-Calls
+## 2. Widget mit eigenen DATEN-API-Calls
 
 \`\`\`typescript
-// FALSCH: Widget ruft eigene API auf
+// FALSCH: Widget holt DATEN ueber eigene API
 function MeinWidget({ stats }: WidgetProps) {
   const [data, setData] = useState(null);
   useEffect(() => {
@@ -1206,10 +1206,14 @@ function MeinWidget({ stats }: WidgetProps) {
 }
 \`\`\`
 
-**Richtig:** Alle Daten kommen ueber \`stats\` Prop. Der Polling-Loop des Systems
-liefert die Daten. Wenn das Widget spezielle Daten braucht (z.B. Cover-Bilder,
-Listen), muessen diese in \`fetchStats()\` geholt und als \`widgetData\` zurueckgegeben
-werden. Das Widget liest dann \`stats.widgetData\`.
+**Richtig fuer Daten:** Alle Daten kommen ueber \`stats\` Prop. Der Polling-Loop
+des Systems liefert die Daten via \`fetchStats()\`. Spezielle Daten (Cover-Bilder,
+Listen) kommen als \`widgetData\`.
+
+**AUSNAHME fuer Actions:** Interaktive Controls (Play/Pause, Like, Toggle) duerfen
+direkt vom Widget die **externe** API aufrufen (NICHT das Dashboard!).
+Der Token kommt dabei ueber \`stats.widgetData.accessToken\`.
+Siehe: Widget-Actions Pattern fuer Details.
 
 ## 3. Widget ohne loading/error States
 
@@ -1380,6 +1384,122 @@ direkt im Dashboard-Repository. Am Ende wird der fertige Ordner als ZIP
 geliefert. Der Benutzer legt ihn dann selbst in \`src/plugins/community/\` ab.
 `,
 
+  widgetActionsPattern: `
+# Widget-Actions: Direkte API-Calls vom Browser
+
+## Wann braucht man Widget-Actions?
+
+Wenn das Widget interaktive Controls hat:
+- Media Player: Play, Pause, Skip, Volume, Like
+- Smart Home: Licht an/aus, Temperatur setzen
+- Download Manager: Start, Stop, Prioritaet aendern
+- Container Manager: Start, Stop, Restart
+
+## Architektur: Die App macht es selbst
+
+Das Dashboard ist NICHT beteiligt bei Widget-Aktionen. Das Widget ruft die
+externe API **direkt vom Browser** auf. Kein Umweg, kein Framework-Endpoint.
+
+\`\`\`
+Widget (Browser)  --->  Externe API (z.B. Spotify)
+                        DIREKT, ohne Dashboard
+\`\`\`
+
+## Token-Weitergabe ueber widgetData
+
+Das Plugin gibt den Token bewusst ueber \`widgetData\` an das Widget weiter:
+
+\`\`\`typescript
+// In fetchStats (serverseitig):
+async fetchStats(config: PluginConfig): Promise<PluginStats> {
+  const token = String(config.accessToken || "");
+
+  // ... stats holen ...
+
+  return {
+    items,
+    status: "ok",
+    widgetData: {
+      accessToken: token,           // Token fuer Widget-Actions
+      deviceId: currentDevice?.id,  // Weitere Daten die das Widget braucht
+      isPlaying: playback?.is_playing,
+      // ... mehr Widget-Daten
+    },
+  };
+}
+\`\`\`
+
+## Widget-seitige Actions
+
+\`\`\`typescript
+// Im Widget (client-seitig):
+"use client";
+
+export function MeinWidget({ stats, config }: WidgetProps) {
+  const data = stats.widgetData as {
+    accessToken?: string;
+    deviceId?: string;
+    isPlaying?: boolean;
+  } | undefined;
+
+  const token = data?.accessToken;
+
+  const handlePlayPause = async () => {
+    if (!token) return;
+    const endpoint = data?.isPlaying ? "pause" : "play";
+    await fetch(\\\`https://api.service.com/v1/me/player/\\\${endpoint}\\\`, {
+      method: "PUT",
+      headers: { Authorization: \\\`Bearer \\\${token}\\\` },
+    });
+  };
+
+  const handleSkip = async () => {
+    if (!token) return;
+    await fetch("https://api.service.com/v1/me/player/next", {
+      method: "POST",
+      headers: { Authorization: \\\`Bearer \\\${token}\\\` },
+    });
+  };
+
+  return (
+    <div>
+      <button onClick={handlePlayPause}>
+        {data?.isPlaying ? "Pause" : "Play"}
+      </button>
+      <button onClick={handleSkip}>Skip</button>
+    </div>
+  );
+}
+\`\`\`
+
+## Regeln
+
+1. **Token ueber widgetData:** Das Plugin entscheidet bewusst was es dem Widget gibt.
+   Nur Service-spezifische Tokens, keine Dashboard-internen Secrets.
+2. **Fehler abfangen:** Widget-Actions muessen Fehler graceful handlen (try/catch,
+   visuelles Feedback, kein Crash).
+3. **Kein Dashboard-Endpoint:** Es gibt KEINE \`/api/enhanced/action\` Route.
+   Das Widget kommuniziert direkt mit dem externen Service.
+4. **CORS beachten:** Client-seitige Calls koennten CORS-Probleme haben.
+   Die meisten OAuth-APIs (Spotify, GitHub) erlauben Browser-Calls mit Bearer Token.
+   Falls CORS blockiert: Action ueber \`onAction\` Callback an das Dashboard
+   signalisieren und dort serverseitig ausfuehren (Fallback-Pattern).
+5. **onAction ist NICHT fuer API-Calls:** \`onAction\` ist nur fuer Widget->Dashboard
+   Signale (z.B. "bitte Stats neu laden"). Die eigentliche Service-Kommunikation
+   macht die App direkt.
+
+## onAction Fallback (fuer CORS-Probleme)
+
+Falls die externe API keine Browser-Calls erlaubt:
+
+\`\`\`typescript
+// Widget signalisiert dem Dashboard eine Aktion
+onAction?.("refresh");  // Dashboard laedt Stats neu
+\`\`\`
+
+Das ist ein Signal, kein API-Call. Das Dashboard ruft dann \`fetchStats()\` erneut auf.
+`,
+
   performanceRules: `
 # Performance-Regeln
 
@@ -1514,7 +1634,8 @@ const processedItems = stats.items.map(item => ({  // Laeuft bei jedem Render!
 - [ ] Groessen-Varianten implementiert (2x1 und/oder 2x2)
 - [ ] In index.ts: \`export const widget = MeinWidget;\` und \`export const widgetName = "MeinWidget";\`
 - [ ] \`widgetComponent\` in renderHints stimmt mit widgetName ueberein
-- [ ] KEINE eigenen API-Calls - nur stats Prop verwenden
+- [ ] Daten NUR ueber stats Prop (Actions direkt zum externen Service sind OK)
+- [ ] Widget-Actions: Token ueber widgetData, fetch direkt zur externen API
 - [ ] widgetData aus stats.widgetData lesen (mit Type-Assertion und Fallback)
 - [ ] CSS-Transitions fuer Karussells/Uebergaenge (keine JS-Animationen)
 - [ ] DOM-Baum flach (< 50 Elemente)

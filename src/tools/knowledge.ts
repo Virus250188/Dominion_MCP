@@ -105,10 +105,11 @@ export function registerKnowledgeTools(server: McpServer): void {
   // ── get_widget_contract ───────────────────────────────────────────────
   server.tool(
     "get_widget_contract",
-    "Returns the widget component contract: WidgetProps interface (including widgetData), widget rules, WidgetHeader usage, registration pattern, shared components, and the TileDialog connection/feature fields UX pattern.",
+    "Returns the widget component contract: WidgetProps interface (including widgetData), widget rules, WidgetHeader usage, registration pattern, shared components, the TileDialog UX pattern, and the Widget-Actions pattern for interactive controls (Play/Pause, Like, etc.).",
     async () => {
       const text = [
         PATTERNS.widgetPattern,
+        PATTERNS.widgetActionsPattern,
         PATTERNS.tileDialogUx,
       ].join("\n\n---\n\n");
 
