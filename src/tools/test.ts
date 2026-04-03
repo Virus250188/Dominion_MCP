@@ -6,7 +6,7 @@ import { execSync } from "node:child_process";
 
 // ─── Constants ────────────────────────────────────────────────────────────
 
-const DASHBOARD_PATH = (process.env.DASHBOARD_PATH || "C:/Users/Miguel/Desktop/Dashboard").replace(/\\/g, "/");
+const DASHBOARD_PATH = (process.env.DASHBOARD_PATH || "").replace(/\\/g, "/");
 
 // ─── Types ────────────────────────────────────────────────────────────────
 
