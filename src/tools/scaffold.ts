@@ -92,6 +92,28 @@ function generateStatOptions(options: StatOptionInput[]): string {
     .join(",\n");
 }
 
+function generateManifest(params: {
+  id: string;
+  name: string;
+  description: string;
+  author: string;
+  hasWidget: boolean;
+  widgetName?: string;
+}): string {
+  const manifest: Record<string, unknown> = {
+    id: params.id,
+    name: params.name,
+    version: "1.0.0",
+    author: params.author,
+    description: params.description,
+  };
+  if (params.hasWidget && params.widgetName) {
+    manifest.hasWidget = true;
+    manifest.widgetFile = `${params.widgetName}.tsx`;
+  }
+  return JSON.stringify(manifest, null, 2);
+}
+
 function generatePluginCode(params: {
   id: string;
   name: string;
@@ -102,6 +124,7 @@ function generatePluginCode(params: {
   supportedSizes: string[];
   hasCrawler: boolean;
   hasWidget: boolean;
+  hasOAuth: boolean;
 }): string {
   const {
     id,
@@ -113,6 +136,7 @@ function generatePluginCode(params: {
     supportedSizes,
     hasCrawler,
     hasWidget,
+    hasOAuth,
   } = params;
 
   const pascalName = toPascalCase(name.replace(/\s+/g, ""));
@@ -193,6 +217,51 @@ function generatePluginCode(params: {
 
     // TODO: Wenn entityEntries vorhanden, spezifische Entities abfragen
 `
+    : "";
+
+  const oauthSection = hasOAuth
+    ? `
+
+  async exchangeToken(code: string, redirectUri: string, config: PluginConfig) {
+    const res = await fetch("TODO_TOKEN_URL", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        grant_type: "authorization_code",
+        code,
+        redirect_uri: redirectUri,
+        client_id: String(config.clientId || ""),
+        client_secret: String(config.clientSecret || ""),
+      }),
+    });
+    if (!res.ok) throw new Error(\`Token exchange failed: HTTP \${res.status}\`);
+    const data = await res.json();
+    return {
+      accessToken: data.access_token,
+      refreshToken: data.refresh_token,
+      expiresAt: Math.floor(Date.now() / 1000) + data.expires_in,
+    };
+  },
+
+  async refreshToken(config: PluginConfig) {
+    const res = await fetch("TODO_TOKEN_URL", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        grant_type: "refresh_token",
+        refresh_token: String(config.refreshToken || ""),
+        client_id: String(config.clientId || ""),
+        client_secret: String(config.clientSecret || ""),
+      }),
+    });
+    if (!res.ok) throw new Error(\`Token refresh failed: HTTP \${res.status}\`);
+    const data = await res.json();
+    return {
+      accessToken: data.access_token,
+      refreshToken: data.refresh_token ?? String(config.refreshToken),
+      expiresAt: Math.floor(Date.now() / 1000) + data.expires_in,
+    };
+  },`
     : "";
 
   const widgetImportLine = hasWidget
@@ -295,7 +364,7 @@ ${visibleStatsConditions}
     } catch (err) {
       return { ok: false, message: (err as Error).message };
     }
-  },${crawlerSection}
+  },${crawlerSection}${oauthSection}
 };
 ${widgetExports}`;
 }
@@ -590,15 +659,29 @@ export function registerScaffoldTools(server: McpServer): void {
         .describe(
           "Whether this plugin has a widget component (affects renderHints layout)",
         ),
+      hasOAuth: z
+        .boolean()
+        .describe(
+          "Whether this plugin uses OAuth (generates exchangeToken + refreshToken skeletons)",
+        ),
     },
     async (params) => {
       const code = generatePluginCode(params);
+      const pascalName = toPascalCase(params.name.replace(/\s+/g, ""));
+      const manifest = generateManifest({
+        id: params.id,
+        name: params.name,
+        description: params.description,
+        author: "TODO: Dein Name",
+        hasWidget: params.hasWidget,
+        widgetName: params.hasWidget ? `${pascalName}Widget` : undefined,
+      });
 
       return {
         content: [
           {
             type: "text" as const,
-            text: `# Generierte Plugin-Datei: src/plugins/community/${params.id}/index.ts\n\n\`\`\`typescript\n${code}\`\`\`\n\n**Naechste Schritte:**\n1. Ordner erstellen: \`src/plugins/community/${params.id}/\`\n2. Datei erstellen: \`index.ts\` mit dem generierten Code\n3. TODO-Kommentare im Code abarbeiten (API-Endpoints, Auth-Header, Markenfarbe)\n4. Server neustarten — Plugin wird automatisch erkannt`,
+            text: `# Generierte Plugin-Dateien fuer: ${params.name}\n\n## 1. plugin.manifest.json\n\n\`\`\`json\n${manifest}\n\`\`\`\n\n## 2. index.ts\n\n\`\`\`typescript\n${code}\`\`\`\n\n**Naechste Schritte:**\n1. Ordner erstellen: \`${params.id}/\`\n2. \`plugin.manifest.json\` mit dem Manifest anlegen\n3. \`index.ts\` mit dem Plugin-Code anlegen\n4. TODO-Kommentare abarbeiten (API-Endpoints, Auth-Header, Markenfarbe, Author)\n5. Als ZIP liefern oder in \`src/plugins/community/\` ablegen`,
           },
         ],
       };

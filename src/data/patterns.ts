@@ -7,6 +7,34 @@ export const PATTERNS = {
   pluginStructure: `
 # Plugin-Struktur (AppPlugin Interface)
 
+## Plugin Manifest (plugin.manifest.json)
+
+Jedes Plugin MUSS ein Manifest haben (Pflicht fuer ZIP-Upload):
+
+\`\`\`json
+{
+  "id": "mein-plugin",
+  "name": "Mein Plugin",
+  "version": "1.0.0",
+  "author": "Dein Name",
+  "description": "Kurzbeschreibung des Plugins",
+  "minDashboardVersion": "1.0.5",
+  "hasWidget": true,
+  "widgetFile": "MeinPluginWidget.tsx"
+}
+\`\`\`
+
+| Feld | Pflicht | Beschreibung |
+|------|---------|-------------|
+| id | Ja | Kebab-case, muss mit metadata.id + Ordnername uebereinstimmen |
+| name | Ja | Anzeigename |
+| version | Ja | Semver (z.B. "1.0.0") |
+| author | Ja | Name oder Handle des Entwicklers |
+| description | Ja | Kurzbeschreibung (ein Satz) |
+| minDashboardVersion | Nein | Minimale Dashboard-Version (z.B. "1.0.5") |
+| hasWidget | Nein | true wenn Widget vorhanden |
+| widgetFile | Nein | Dateiname des Widgets (Pflicht wenn hasWidget=true) |
+
 ## Vollstaendiges Interface
 
 \`\`\`typescript
@@ -38,6 +66,14 @@ export const plugin: AppPlugin = {
 
   // Optional:
   async crawlEntities?(config: PluginConfig): Promise<{ groups: CrawlEntityGroup[] }> { ... },
+
+  // Optional (nur fuer OAuth-Plugins):
+  async exchangeToken?(code: string, redirectUri: string, config: PluginConfig): Promise<{
+    accessToken: string; refreshToken?: string; expiresAt?: number;
+  }> { ... },
+  async refreshToken?(config: PluginConfig): Promise<{
+    accessToken: string; refreshToken?: string; expiresAt?: number;
+  }> { ... },
 };
 
 // PFLICHT fuer Auto-Discovery (auch wenn null):
@@ -94,6 +130,16 @@ interface SizeRenderHint {
 }
 \`\`\`
 
+### OAuthConfig (fuer type: "oauth" ConfigFields)
+\`\`\`typescript
+interface OAuthConfig {
+  authUrl: string;     // Authorization Endpoint des Providers
+  tokenUrl: string;    // Token Exchange Endpoint
+  scopes: string[];    // Benoetigte Scopes
+  pkce?: boolean;      // Optional: PKCE Flow verwenden (sicherer)
+}
+\`\`\`
+
 ### CrawlEntityGroup (fuer crawlEntities)
 \`\`\`typescript
 interface CrawlEntityGroup {
@@ -122,6 +168,7 @@ interface CrawlEntityGroup {
 | \`"textarea"\`| Textarea   | Mehrzeilige Entity-Listen (Legacy)    |
 | \`"select"\` | Select      | Dropdown-Auswahl (z.B. Protokoll)     |
 | \`"number"\` | Input Num   | Port, Intervall, Limits               |
+| \`"oauth"\`  | OAuth Button| OAuth-Verbindung (Spotify, GitHub, etc.) |
 
 ## Typische Muster
 
@@ -1291,19 +1338,22 @@ spotify/
 
 RICHTIG: Alles in einem Ordner, keine API-Routes
 spotify/
-  index.ts               <- Plugin-Definition mit fetchStats + testConnection
+  plugin.manifest.json   <- Manifest
+  index.ts               <- Plugin-Definition mit fetchStats + testConnection + exchangeToken + refreshToken
   SpotifyWidget.tsx       <- Optional: Widget-Komponente
 \`\`\`
 
 Plugins erstellen KEINE eigenen \`/api/\` Routes. Das Enhanced App System hat
-genau DREI API-Endpunkte die vom System bereitgestellt werden:
-- \`GET /api/enhanced/[appId]\` - ruft \`fetchStats()\` auf
+diese System-Endpunkte:
+- \`GET /api/enhanced/[appId]\` - ruft \`fetchStats()\` auf (inkl. auto Token-Refresh)
 - \`POST /api/enhanced/test\` - ruft \`testConnection()\` auf
 - \`POST /api/enhanced/crawl\` - ruft \`crawlEntities()\` auf
+- \`GET /api/enhanced/oauth/callback\` - OAuth Callback (ruft \`exchangeToken()\` auf)
 
-OAuth, eigene Auth-Flows oder externe Callbacks gehoeren NICHT in ein Plugin.
-Wenn ein Service OAuth braucht, muss der API Key / Access Token manuell vom
-Benutzer in den configFields eingetragen werden (z.B. als Personal Access Token).
+**OAuth ist erlaubt** — aber ueber das Framework, NICHT ueber eigene Routes.
+Das Plugin deklariert \`type: "oauth"\` im configField und implementiert
+\`exchangeToken()\` + \`refreshToken()\`. Das Framework handhabt den Rest
+(Redirect, Callback, Token-Speicherung, automatischer Refresh).
 
 ## 12. Dateien ausserhalb des Plugin-Ordners erstellen
 

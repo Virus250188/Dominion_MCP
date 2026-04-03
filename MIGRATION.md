@@ -167,10 +167,23 @@ import { formatBytes, formatUptime } from "../../utils";
 
 **Problem:** Plugin implementiert OAuth mit eigenen Routes (auth, callback).
 
-**Loesung:** OAuth ist fuer Community Plugins nicht vorgesehen. Der Benutzer
-erstellt einen API Key / Personal Access Token im Ziel-Service und traegt
-diesen in den `configFields` ein. Das Token kommt verschluesselt aus der DB
-und ist in `config.apiKey` / `config.accessToken` verfuegbar.
+**Loesung:** Das Framework bietet einen eingebauten OAuth-Flow.
+Statt eigene Routes: `type: "oauth"` ConfigField deklarieren und
+`exchangeToken()` + `refreshToken()` implementieren. Das Framework
+handhabt Redirect, Callback, Token-Speicherung und automatischen Refresh.
+
+```typescript
+configFields: [
+  { key: "clientId", label: "Client ID", type: "text", required: true },
+  { key: "clientSecret", label: "Client Secret", type: "password", required: true },
+  {
+    key: "oauth",
+    label: "Verbinden",
+    type: "oauth",
+    oauth: { authUrl: "...", tokenUrl: "...", scopes: ["..."] },
+  },
+]
+```
 
 ### Player-Controls / Aktionen
 

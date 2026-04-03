@@ -23,11 +23,17 @@ Am Ende wird der fertige Plugin-Ordner als ZIP geliefert oder manuell in
 \`src/plugins/community/\` abgelegt. Der Agent hat KEINEN Schreibzugriff auf
 das Dashboard-Repository.
 
-**Ein Plugin ist EIN Ordner** mit maximal 2-3 Dateien:
+**Ein Plugin ist EIN Ordner** mit diesen Dateien:
+- \`plugin.manifest.json\` (Pflicht) — Manifest mit ID, Name, Version, Autor
 - \`index.ts\` (Pflicht) — Plugin-Definition mit allen Exports
 - \`{Name}Widget.tsx\` (Optional) — Widget-Komponente
+- \`types.ts\` (Optional) — Eigene Typ-Definitionen
 - Sonst nichts. KEINE eigenen API-Routes, KEINE eigenen Ordnerstrukturen,
   KEINE Dateien ausserhalb des Plugin-Ordners.
+
+**Delivery:** Der fertige Ordner wird als ZIP geliefert. Der User kann es
+entweder in \`src/plugins/community/\` ablegen ODER ueber
+**Einstellungen > Plugins > Upload** hochladen.
 
 ## Kernkonzepte
 
@@ -44,7 +50,17 @@ das Dashboard-Repository.
 - **KEINE eigenen API-Routes:** Plugins erstellen KEINE eigenen \`/api/\` Routes.
   Alle Daten werden ueber \`fetchStats()\` geholt, das serverseitig laeuft.
   Alle Aktionen laufen ueber den \`onAction\` Callback im Widget.
-  OAuth oder externe Auth-Flows gehoeren NICHT in ein Plugin.
+
+- **OAuth-Support (Framework-Feature):** Fuer Services die OAuth brauchen
+  (Spotify, GitHub, etc.) bietet das Framework einen eingebauten OAuth-Flow.
+  Das Plugin deklariert nur \`type: "oauth"\` im configField und implementiert
+  \`exchangeToken()\` + \`refreshToken()\` — das Framework handhabt Redirect,
+  Callback, Token-Speicherung und automatischen Token-Refresh.
+  **KEINE eigenen OAuth-Routes bauen!**
+
+- **Plugin Manifest (\`plugin.manifest.json\`):** Jedes Plugin braucht ein
+  Manifest mit id, name, version, author, description. Pflicht fuer ZIP-Upload,
+  empfohlen fuer manuell platzierte Plugins.
 
 - **Shared Utilities:** Gemeinsame Hilfsfunktionen in \`src/plugins/utils.ts\`:
   \`getVisibleStats\`, \`normalizeUrl\`, \`createErrorResponse\`, \`createFetchOptions\`,
@@ -94,7 +110,9 @@ src/plugins/
   community/            # Community Plugins (von externen Entwicklern, Auto-Discovery)
     index.ts            # AUTO-GENERATED: wird beim Start/Build automatisch generiert
     {plugin-id}/        # Ein Ordner pro Plugin (Ordnername = metadata.id)
+      plugin.manifest.json  # Pflicht: Manifest mit id, name, version, author
       index.ts          # Pflicht-Exports: plugin, widget, widgetName
+      {Name}Widget.tsx   # Optional: Widget-Komponente
 
 src/components/widgets/
   registry.ts           # Widget-Registry (registerWidget/getWidget + auto-import communityWidgets)
@@ -111,9 +129,11 @@ src/components/widgets/
 
 | Endpunkt | Methode | Beschreibung | Auth | Rate Limit |
 |----------|---------|-------------|------|------------|
-| \`/api/enhanced/[appId]\` | GET | Stats fuer ein Enhanced Tile abrufen | Ja | Nein |
+| \`/api/enhanced/[appId]\` | GET | Stats abrufen (ruft \`fetchStats\` auf, inkl. auto Token-Refresh) | Ja | Nein |
 | \`/api/enhanced/test\` | POST | Verbindung testen (\`{ enhancedType, config }\`) | Ja | Ja |
 | \`/api/enhanced/crawl\` | POST | Entities crawlen (\`{ enhancedType, config }\`) | Ja | Ja |
+| \`/api/enhanced/oauth/callback\` | GET | OAuth Callback (ruft \`exchangeToken\` auf, speichert Tokens) | Ja | Nein |
+| \`/api/plugins/upload\` | POST | ZIP-Upload eines Community Plugins | Ja | Ja |
 
 ## Tech Stack
 
@@ -465,6 +485,23 @@ Der Entwickler bestimmt nur, welche Daten und Visualisierungen darin erscheinen.
 - \`export const widget = MeinWidget;\` oder \`export const widget = null;\`
 - \`export const widgetName = "MeinWidget";\` oder \`export const widgetName = null;\`
 - Alle drei Exports sind PFLICHT, auch wenn widget/widgetName null sind
+
+### 12. Plugin Manifest (\`plugin.manifest.json\`)
+- Pflichtfelder: \`id\`, \`name\`, \`version\` (semver), \`author\`, \`description\`
+- Optionale Felder: \`minDashboardVersion\`, \`hasWidget\`, \`widgetFile\`
+- \`id\` muss mit \`metadata.id\` und dem Ordnernamen uebereinstimmen
+- Pflicht fuer ZIP-Upload, empfohlen fuer manuell platzierte Plugins
+
+### 13. Optional: OAuth (\`exchangeToken\` + \`refreshToken\`)
+- Nur fuer Services die OAuth brauchen (kein API Key verfuegbar)
+- Plugin deklariert \`type: "oauth"\` configField mit authUrl, tokenUrl, scopes
+- Plugin implementiert \`exchangeToken(code, redirectUri, config)\` — tauscht Auth-Code gegen Tokens
+- Plugin implementiert \`refreshToken(config)\` — erneuert abgelaufene Tokens
+- Beide geben zurueck: \`{ accessToken, refreshToken?, expiresAt? }\`
+- **Das Framework handhabt:** Redirect zum Provider, Callback-Route, Token-Speicherung,
+  automatischer Refresh wenn Token < 60s vor Ablauf
+- **Das Plugin handhabt:** Die HTTP-Calls zum Token-Endpoint des Providers
+- \`config.accessToken\` ist in \`fetchStats\` automatisch verfuegbar nach OAuth
 
 ---
 

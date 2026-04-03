@@ -4,6 +4,7 @@ import { registerKnowledgeTools } from "./tools/knowledge.js";
 import { registerScaffoldTools } from "./tools/scaffold.js";
 import { registerValidationTools } from "./tools/validate.js";
 import { registerTestTools } from "./tools/test.js";
+import { registerPreviewTools } from "./tools/preview.js";
 
 // ─── Dominion Enhanced App MCP Server ────────────────────────────────────
 //
@@ -27,6 +28,7 @@ registerKnowledgeTools(server);
 registerScaffoldTools(server);
 registerValidationTools(server);
 registerTestTools(server);
+registerPreviewTools(server);
 
 // Start the server with stdio transport
 async function main() {
