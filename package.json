@@ -1,6 +1,6 @@
 {
   "name": "dominion-enhanced-mcp",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "description": "MCP Server to help AI agents develop Enhanced Apps for the Dominion Dashboard",
   "type": "module",
   "main": "dist/index.js",
@@ -10,9 +10,11 @@
     "dev": "tsc --watch"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.12.1"
+    "@modelcontextprotocol/sdk": "^1.12.1",
+    "adm-zip": "^0.5.16"
   },
   "devDependencies": {
+    "@types/adm-zip": "^0.5.7",
     "@types/node": "^22.15.3",
     "typescript": "^5.8.3"
   }

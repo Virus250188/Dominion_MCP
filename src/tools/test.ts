@@ -1,12 +1,5 @@
 import { z } from "zod";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import fs from "node:fs";
-import path from "node:path";
-import { execSync } from "node:child_process";
-
-// ─── Constants ────────────────────────────────────────────────────────────
-
-const DASHBOARD_PATH = (process.env.DASHBOARD_PATH || "").replace(/\\/g, "/");
 
 // ─── Types ────────────────────────────────────────────────────────────────
 
@@ -22,192 +15,203 @@ interface ChecklistResult {
   allPassed: boolean;
 }
 
-interface BuildResult {
-  success: boolean;
-  output: string;
-  errors: string;
-}
+// ─── test_plugin_completeness ────────────────────────────────────────────
+// Validates that all required files and exports are present for a complete plugin.
+// Works standalone on code strings — no filesystem or DASHBOARD_PATH needed.
 
-interface ExportResult {
+function testPluginCompleteness(params: {
   pluginId: string;
-  checks: CheckItem[];
-  allPassed: boolean;
-}
-
-// ─── Helpers ──────────────────────────────────────────────────────────────
-
-function fileExists(filePath: string): boolean {
-  try {
-    return fs.existsSync(filePath);
-  } catch {
-    return false;
-  }
-}
-
-function readFileContent(filePath: string): string | null {
-  try {
-    return fs.readFileSync(filePath, "utf-8");
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Normalize a path for consistent forward-slash usage and resolve it.
- */
-function normPath(...segments: string[]): string {
-  return path.resolve(...segments).replace(/\\/g, "/");
-}
-
-// ─── test_plugin_files ────────────────────────────────────────────────────
-
-function testPluginFiles(pluginId: string): ChecklistResult {
+  pluginCode: string;
+  manifestJson?: string;
+  widgetCode?: string;
+  widgetFileName?: string;
+}): ChecklistResult {
+  const { pluginId, pluginCode, manifestJson, widgetCode, widgetFileName } = params;
   const checks: CheckItem[] = [];
 
-  // 1. Plugin index.ts exists (check both community/ and builtin/ locations)
-  const communityPluginPath = normPath(DASHBOARD_PATH, "src/plugins/community", pluginId, "index.ts");
-  const builtinPluginPath = normPath(DASHBOARD_PATH, "src/plugins/builtin", pluginId, "index.ts");
-  const communityExists = fileExists(communityPluginPath);
-  const builtinExists = fileExists(builtinPluginPath);
-  const pluginExists = communityExists || builtinExists;
-  const pluginIndexPath = communityExists ? communityPluginPath : builtinPluginPath;
-  const pluginLocation = communityExists ? "community" : builtinExists ? "builtin" : "community";
+  // 1. Manifest present and valid
+  if (manifestJson) {
+    try {
+      const manifest = JSON.parse(manifestJson);
+      const requiredFields = ["id", "name", "version", "author", "description"];
+      const missingFields = requiredFields.filter(
+        (f) => typeof manifest[f] !== "string" || manifest[f].trim() === "",
+      );
 
-  checks.push({
-    check: "Plugin index.ts exists",
-    passed: pluginExists,
-    detail: pluginExists
-      ? `Found: ${pluginIndexPath}`
-      : `Missing: expected at ${communityPluginPath} (community) or ${builtinPluginPath} (builtin)`,
-  });
+      if (missingFields.length === 0) {
+        checks.push({
+          check: "Manifest hat alle Pflichtfelder",
+          passed: true,
+          detail: `id="${manifest.id}", name="${manifest.name}", version="${manifest.version}"`,
+        });
+      } else {
+        checks.push({
+          check: "Manifest hat alle Pflichtfelder",
+          passed: false,
+          detail: `Fehlende Felder: ${missingFields.join(", ")}`,
+        });
+      }
 
-  // 2. Plugin is registered (community/index.ts or registry.ts)
-  if (communityExists) {
-    // Community plugin: check community/index.ts
-    const communityBarrelPath = normPath(DASHBOARD_PATH, "src/plugins/community/index.ts");
-    const communityBarrelContent = readFileContent(communityBarrelPath);
-    if (communityBarrelContent === null) {
+      // Manifest ID matches pluginId
+      if (manifest.id && manifest.id !== pluginId) {
+        checks.push({
+          check: "Manifest ID stimmt mit pluginId ueberein",
+          passed: false,
+          detail: `manifest.id="${manifest.id}" != pluginId="${pluginId}"`,
+        });
+      } else if (manifest.id) {
+        checks.push({
+          check: "Manifest ID stimmt mit pluginId ueberein",
+          passed: true,
+          detail: `Beide sind "${pluginId}"`,
+        });
+      }
+
+      // kebab-case check
+      const kebabOk = /^[a-z0-9]+(-[a-z0-9]+)*$/.test(manifest.id || "");
       checks.push({
-        check: "Plugin exported in community/index.ts",
+        check: "Plugin-ID ist kebab-case",
+        passed: kebabOk,
+        detail: kebabOk
+          ? `"${manifest.id}" ist korrektes kebab-case`
+          : `"${manifest.id}" ist KEIN gueltiges kebab-case (erlaubt: a-z, 0-9, -)`,
+      });
+
+      // semver check
+      const semverOk = /^\d+\.\d+\.\d+/.test(manifest.version || "");
+      checks.push({
+        check: "Version ist semver",
+        passed: semverOk,
+        detail: semverOk
+          ? `"${manifest.version}" ist gueltiges semver`
+          : `"${manifest.version}" ist KEIN gueltiges semver (erwartet: x.y.z)`,
+      });
+
+      // Widget consistency
+      if (manifest.hasWidget === true) {
+        const hasWidgetFile = !!widgetCode;
+        checks.push({
+          check: "Widget-Datei vorhanden (manifest.hasWidget=true)",
+          passed: hasWidgetFile,
+          detail: hasWidgetFile
+            ? `Widget-Code wurde mitgeliefert${widgetFileName ? ` (${widgetFileName})` : ""}`
+            : "manifest.hasWidget ist true, aber kein widgetCode angegeben",
+        });
+      }
+    } catch {
+      checks.push({
+        check: "Manifest ist gueltiges JSON",
         passed: false,
-        detail: `Could not read: ${communityBarrelPath}`,
-      });
-    } else {
-      const exportPattern = new RegExp(`from\\s+["']\\.\\/\\s*${pluginId}["']`);
-      const hasExport = exportPattern.test(communityBarrelContent) || communityBarrelContent.includes(`./${pluginId}`);
-      checks.push({
-        check: "Plugin exported in community/index.ts",
-        passed: hasExport,
-        detail: hasExport
-          ? `Found export for ./${pluginId} in community/index.ts`
-          : `No export found for ./${pluginId} in community/index.ts`,
-      });
-    }
-  } else if (builtinExists) {
-    // Builtin plugin: check registry.ts
-    const registryPath = normPath(DASHBOARD_PATH, "src/plugins/registry.ts");
-    const registryContent = readFileContent(registryPath);
-    if (registryContent === null) {
-      checks.push({
-        check: "Plugin registered in registry.ts",
-        passed: false,
-        detail: `Could not read: ${registryPath}`,
-      });
-    } else {
-      const importPattern = new RegExp(`from\\s+["']\\./builtin/${pluginId}["']`);
-      const hasImport = importPattern.test(registryContent);
-      checks.push({
-        check: "Plugin registered in registry.ts",
-        passed: hasImport,
-        detail: hasImport
-          ? `Found import for ./builtin/${pluginId} in registry.ts`
-          : `No import found for ./builtin/${pluginId} in registry.ts`,
+        detail: "Konnte manifest nicht als JSON parsen",
       });
     }
   } else {
     checks.push({
-      check: "Plugin registered",
+      check: "Manifest vorhanden",
       passed: false,
-      detail: `Plugin file not found, cannot check registration.`,
+      detail: "Kein manifestJson angegeben. Pflicht fuer ZIP-Upload.",
     });
   }
 
-  // 3. Icon auto-resolution check (informational - no ICON_MAP editing needed)
+  // 2. Plugin has standardized export
+  const hasPluginExport = /export\s+const\s+plugin\s*[=:]/.test(pluginCode);
   checks.push({
-    check: "Icon auto-resolution (no ICON_MAP editing needed)",
-    passed: true,
-    detail: "Icons are auto-resolved from metadata.icon via the plugin registry. No manual ICON_MAP entry required.",
+    check: "Hat `export const plugin` Export",
+    passed: hasPluginExport,
+    detail: hasPluginExport
+      ? "Gefunden: `export const plugin` (Auto-Discovery kompatibel)"
+      : "Fehlend: Community Plugins muessen `export const plugin: AppPlugin = { ... }` exportieren",
   });
 
-  // 4. If plugin has widget renderHints, check widget files
-  const pluginContent = pluginExists ? readFileContent(pluginIndexPath) : null;
-  let hasWidget = false;
+  // 3. Has widget + widgetName exports
+  const hasWidgetExport = /export\s+const\s+widget\s*=/.test(pluginCode);
+  const hasWidgetNameExport = /export\s+const\s+widgetName\s*=/.test(pluginCode);
+  checks.push({
+    check: "Hat widget/widgetName Exports (Auto-Discovery)",
+    passed: hasWidgetExport && hasWidgetNameExport,
+    detail:
+      hasWidgetExport && hasWidgetNameExport
+        ? "Gefunden: `export const widget` und `export const widgetName`"
+        : `Fehlend: ${!hasWidgetExport ? "export const widget" : ""}${!hasWidgetExport && !hasWidgetNameExport ? " und " : ""}${!hasWidgetNameExport ? "export const widgetName" : ""}. Beide Pflicht (null falls kein Widget).`,
+  });
 
-  if (pluginContent) {
-    const widgetComponentMatch = pluginContent.match(/widgetComponent\s*:\s*["']([^"']+)["']/);
-    if (widgetComponentMatch) {
-      hasWidget = true;
-      const widgetName = widgetComponentMatch[1];
-
-      // Check widget directory exists
-      const widgetDir = normPath(DASHBOARD_PATH, "src/components/widgets", pluginId);
-      const widgetDirExists = fileExists(widgetDir);
-      checks.push({
-        check: `Widget directory exists for "${widgetName}"`,
-        passed: widgetDirExists,
-        detail: widgetDirExists
-          ? `Found: ${widgetDir}`
-          : `Missing widget directory: ${widgetDir}`,
-      });
-
-      // Check widget registration (community: communityWidgets map, builtin: widgets/registry.ts)
-      if (communityExists) {
-        const communityBarrelPath = normPath(DASHBOARD_PATH, "src/plugins/community/index.ts");
-        const communityBarrelContent = readFileContent(communityBarrelPath);
-        if (communityBarrelContent === null) {
-          checks.push({
-            check: "Widget registered in communityWidgets map",
-            passed: false,
-            detail: `Could not read: ${communityBarrelPath}`,
-          });
-        } else {
-          const hasRegistration = communityBarrelContent.includes(widgetName);
-          checks.push({
-            check: "Widget registered in communityWidgets map",
-            passed: hasRegistration,
-            detail: hasRegistration
-              ? `Found "${widgetName}" in community/index.ts communityWidgets`
-              : `No "${widgetName}" found in communityWidgets map in community/index.ts. Add it there for auto-registration.`,
-          });
-        }
-      } else {
-        const widgetRegistryPath = normPath(DASHBOARD_PATH, "src/components/widgets/registry.ts");
-        const widgetRegistryContent = readFileContent(widgetRegistryPath);
-        if (widgetRegistryContent === null) {
-          checks.push({
-            check: "Widget registered in widgets/registry.ts",
-            passed: false,
-            detail: `Could not read: ${widgetRegistryPath}`,
-          });
-        } else {
-          const hasRegistration = widgetRegistryContent.includes(pluginId) || widgetRegistryContent.includes(widgetName);
-          checks.push({
-            check: "Widget registered in widgets/registry.ts",
-            passed: hasRegistration,
-            detail: hasRegistration
-              ? `Found registration for "${widgetName}" in widgets/registry.ts`
-              : `No registration found for "${widgetName}" in widgets/registry.ts`,
-          });
-        }
-      }
+  // 4. All required AppPlugin fields present
+  const requiredFields = ["metadata", "configFields", "statOptions", "supportedSizes", "renderHints", "fetchStats", "testConnection"];
+  const missingFields: string[] = [];
+  for (const field of requiredFields) {
+    const fieldAsProperty = new RegExp(`\\b${field}\\s*[:(]`);
+    const fieldAsAsync = new RegExp(`async\\s+${field}\\s*\\(`);
+    if (!fieldAsProperty.test(pluginCode) && !fieldAsAsync.test(pluginCode)) {
+      missingFields.push(field);
     }
   }
+  checks.push({
+    check: "Alle Pflicht-Felder von AppPlugin vorhanden",
+    passed: missingFields.length === 0,
+    detail:
+      missingFields.length === 0
+        ? `Alle ${requiredFields.length} Felder gefunden`
+        : `Fehlende Felder: ${missingFields.join(", ")}`,
+  });
 
-  if (!hasWidget) {
+  // 5. fetchStats is async
+  const asyncFetchStats = /async\s+fetchStats\s*\(/.test(pluginCode);
+  checks.push({
+    check: "fetchStats ist async",
+    passed: asyncFetchStats,
+    detail: asyncFetchStats
+      ? "fetchStats ist als async Funktion definiert"
+      : "fetchStats ist NICHT async. Muss Promise<PluginStats> zurueckgeben.",
+  });
+
+  // 6. testConnection is async
+  const asyncTestConnection = /async\s+testConnection\s*\(/.test(pluginCode);
+  checks.push({
+    check: "testConnection ist async",
+    passed: asyncTestConnection,
+    detail: asyncTestConnection
+      ? "testConnection ist als async Funktion definiert"
+      : "testConnection ist NICHT async. Muss Promise<{ ok, message }> zurueckgeben.",
+  });
+
+  // 7. Uses shared utilities
+  const usesSharedUtils = /from\s+["'].*utils["']/.test(pluginCode);
+  checks.push({
+    check: "Nutzt Shared Utilities aus utils.ts",
+    passed: usesSharedUtils,
+    detail: usesSharedUtils
+      ? 'Import von utils.ts gefunden (getVisibleStats, normalizeUrl, etc.)'
+      : 'Kein Import von "../../utils". Plugins sollten getVisibleStats, normalizeUrl, createErrorResponse, createFetchOptions nutzen.',
+  });
+
+  // 8. No deprecated features field
+  const hasFeaturesField = /features\s*:\s*\[/.test(pluginCode);
+  checks.push({
+    check: "Kein veraltetes `features` Feld in renderHints",
+    passed: !hasFeaturesField,
+    detail: hasFeaturesField
+      ? "Veraltetes `features` Feld gefunden. Entfernen -- wurde aus SizeRenderHint entfernt."
+      : "Kein veraltetes `features` Feld. Gut.",
+  });
+
+  // 9. Widget validation (if provided)
+  if (widgetCode) {
+    const hasUseClient = widgetCode.includes('"use client"') || widgetCode.includes("'use client'");
     checks.push({
-      check: "Widget files (if applicable)",
-      passed: true,
-      detail: "Plugin does not define a widgetComponent, no widget files needed.",
+      check: 'Widget hat "use client" Direktive',
+      passed: hasUseClient,
+      detail: hasUseClient
+        ? '"use client" gefunden'
+        : 'Fehlend: Widget-Dateien muessen `"use client"` am Anfang haben.',
+    });
+
+    const hasWidgetHeader = widgetCode.includes("WidgetHeader");
+    checks.push({
+      check: "Widget nutzt WidgetHeader",
+      passed: hasWidgetHeader,
+      detail: hasWidgetHeader
+        ? "WidgetHeader Import/Nutzung gefunden"
+        : "WidgetHeader nicht gefunden. Empfohlen fuer konsistente Widget-Kopfzeile.",
     });
   }
 
@@ -218,163 +222,212 @@ function testPluginFiles(pluginId: string): ChecklistResult {
   };
 }
 
-// ─── test_build_compile ───────────────────────────────────────────────────
+// ─── test_typescript_syntax ──────────────────────────────────────────────
+// Basic TypeScript syntax validation via regex. Checks bracket balance,
+// import format, and common mistakes. No compiler needed.
 
-function testBuildCompile(): BuildResult {
-  try {
-    const output = execSync("npm run build", {
-      cwd: DASHBOARD_PATH.replace(/\//g, path.sep),
-      timeout: 120_000,
-      encoding: "utf-8",
-      stdio: ["pipe", "pipe", "pipe"],
-    });
-    return {
-      success: true,
-      output: typeof output === "string" ? output : String(output),
-      errors: "",
-    };
-  } catch (err: unknown) {
-    const execError = err as { stdout?: string; stderr?: string; message?: string };
-    return {
-      success: false,
-      output: execError.stdout || "",
-      errors: execError.stderr || execError.message || "Unknown build error",
-    };
-  }
-}
-
-// ─── test_plugin_export ───────────────────────────────────────────────────
-
-function testPluginExport(pluginId: string): ExportResult {
+function testTypescriptSyntax(params: {
+  pluginCode: string;
+  widgetCode?: string;
+}): { checks: CheckItem[]; allPassed: boolean } {
   const checks: CheckItem[] = [];
 
-  // Try community/ first, then builtin/
-  const communityPath = normPath(DASHBOARD_PATH, "src/plugins/community", pluginId, "index.ts");
-  const builtinPath = normPath(DASHBOARD_PATH, "src/plugins/builtin", pluginId, "index.ts");
-  const pluginIndexPath = fileExists(communityPath) ? communityPath : builtinPath;
+  function checkCode(code: string, label: string): void {
+    // 1. Bracket balance
+    let braceDepth = 0;
+    let parenDepth = 0;
+    let bracketDepth = 0;
+    let inString = false;
+    let stringChar = "";
+    let inTemplateString = false;
 
-  // 1. File exists and is readable
-  const content = readFileContent(pluginIndexPath);
-  if (content === null) {
+    for (let i = 0; i < code.length; i++) {
+      const ch = code[i];
+      const prev = i > 0 ? code[i - 1] : "";
+
+      if (inString) {
+        if (ch === stringChar && prev !== "\\") inString = false;
+        continue;
+      }
+      if (inTemplateString) {
+        if (ch === "`" && prev !== "\\") inTemplateString = false;
+        continue;
+      }
+      if (ch === '"' || ch === "'") {
+        inString = true;
+        stringChar = ch;
+        continue;
+      }
+      if (ch === "`") {
+        inTemplateString = true;
+        continue;
+      }
+      // Skip line comments
+      if (ch === "/" && i + 1 < code.length && code[i + 1] === "/") {
+        const newline = code.indexOf("\n", i);
+        i = newline === -1 ? code.length : newline;
+        continue;
+      }
+
+      if (ch === "{") braceDepth++;
+      if (ch === "}") braceDepth--;
+      if (ch === "(") parenDepth++;
+      if (ch === ")") parenDepth--;
+      if (ch === "[") bracketDepth++;
+      if (ch === "]") bracketDepth--;
+    }
+
+    const balanced = braceDepth === 0 && parenDepth === 0 && bracketDepth === 0;
     checks.push({
-      check: "File exists and is readable",
-      passed: false,
-      detail: `Cannot read: ${pluginIndexPath} (also checked: ${communityPath})`,
+      check: `${label}: Klammern balanciert`,
+      passed: balanced,
+      detail: balanced
+        ? "Alle Klammern korrekt geschlossen"
+        : `Unbalanciert: { ${braceDepth > 0 ? `+${braceDepth}` : braceDepth} } ( ${parenDepth > 0 ? `+${parenDepth}` : parenDepth} ) [ ${bracketDepth > 0 ? `+${bracketDepth}` : bracketDepth} ]`,
     });
-    return { pluginId, checks, allPassed: false };
+
+    // 2. Import paths check (should use relative paths for plugin utils)
+    const absoluteImports = [...code.matchAll(/from\s+["']([^"']+)["']/g)];
+    const badImports: string[] = [];
+    for (const match of absoluteImports) {
+      const importPath = match[1];
+      // Plugin code should use relative imports for local files or @/ for Dashboard internals
+      if (importPath.startsWith("/") && !importPath.startsWith("//")) {
+        badImports.push(importPath);
+      }
+    }
+    checks.push({
+      check: `${label}: Keine absoluten Import-Pfade`,
+      passed: badImports.length === 0,
+      detail:
+        badImports.length === 0
+          ? "Alle Imports verwenden relative Pfade oder @/ Alias"
+          : `Absolute Pfade gefunden: ${badImports.join(", ")}`,
+    });
+
+    // 3. No console.log (warning)
+    const hasConsoleLog = /console\.(log|debug|info)\s*\(/.test(code);
+    checks.push({
+      check: `${label}: Kein console.log (Production)`,
+      passed: !hasConsoleLog,
+      detail: hasConsoleLog
+        ? "console.log/debug/info gefunden. Sollte fuer Production entfernt werden."
+        : "Keine console.log Aufrufe. Gut.",
+    });
   }
 
-  checks.push({
-    check: "File exists and is readable",
-    passed: true,
-    detail: `Read ${content.length} characters from ${pluginIndexPath}`,
-  });
+  checkCode(params.pluginCode, "index.ts");
 
-  // 2. Has standardized export (export const plugin: AppPlugin)
-  const hasPluginExport = /export\s+const\s+plugin\s*[=:]/.test(content);
-  // Also accept legacy {name}Plugin export for builtin plugins
-  const legacyExportMatch = content.match(/export\s+const\s+(\w+Plugin)\s*[=:]/);
+  if (params.widgetCode) {
+    checkCode(params.widgetCode, "Widget");
+  }
+
+  return {
+    checks,
+    allPassed: checks.every((c) => c.passed),
+  };
+}
+
+// ─── test_plugin_export ──────────────────────────────────────────────────
+// Static analysis of plugin exports. Accepts code as string.
+
+function testPluginExport(pluginCode: string): { checks: CheckItem[]; allPassed: boolean } {
+  const checks: CheckItem[] = [];
+
+  // 1. Has standardized export
+  const hasPluginExport = /export\s+const\s+plugin\s*[=:]/.test(pluginCode);
+  const legacyExportMatch = pluginCode.match(/export\s+const\s+(\w+Plugin)\s*[=:]/);
+
   if (hasPluginExport) {
     checks.push({
-      check: "Has standardized plugin export",
+      check: "Hat standardisierten Plugin-Export",
       passed: true,
-      detail: 'Found `export const plugin` (Auto-Discovery compatible)',
+      detail: "Gefunden: `export const plugin` (Auto-Discovery kompatibel)",
     });
   } else if (legacyExportMatch) {
     checks.push({
-      check: "Has standardized plugin export",
+      check: "Hat standardisierten Plugin-Export",
       passed: true,
-      detail: `Found legacy export: ${legacyExportMatch[1]} (builtin format)`,
+      detail: `Gefunden: Legacy Export ${legacyExportMatch[1]} (Builtin Format)`,
     });
   } else {
     checks.push({
-      check: "Has standardized plugin export",
+      check: "Hat standardisierten Plugin-Export",
       passed: false,
-      detail: 'No `export const plugin` found. Community plugins must export: `export const plugin: AppPlugin = { ... }`',
+      detail: "Kein `export const plugin` gefunden. Community Plugins muessen `export const plugin: AppPlugin = { ... }` exportieren.",
     });
   }
 
-  // 2b. Community plugins: check for widget and widgetName exports
-  if (fileExists(communityPath)) {
-    const hasWidgetExport = /export\s+const\s+widget\s*[=]/.test(content);
-    const hasWidgetNameExport = /export\s+const\s+widgetName\s*[=]/.test(content);
-    checks.push({
-      check: "Has widget/widgetName exports (Auto-Discovery)",
-      passed: hasWidgetExport && hasWidgetNameExport,
-      detail: hasWidgetExport && hasWidgetNameExport
-        ? "Found `export const widget` and `export const widgetName` (can be null)"
-        : `Missing: ${!hasWidgetExport ? "export const widget" : ""}${!hasWidgetExport && !hasWidgetNameExport ? " and " : ""}${!hasWidgetNameExport ? "export const widgetName" : ""}. Both are required (use null if no widget).`,
-    });
-  }
+  // 2. Widget/widgetName exports
+  const hasWidgetExport = /export\s+const\s+widget\s*=/.test(pluginCode);
+  const hasWidgetNameExport = /export\s+const\s+widgetName\s*=/.test(pluginCode);
+  checks.push({
+    check: "Hat widget/widgetName Exports",
+    passed: hasWidgetExport && hasWidgetNameExport,
+    detail:
+      hasWidgetExport && hasWidgetNameExport
+        ? "Beide Exports gefunden (koennen null sein)"
+        : `Fehlend: ${!hasWidgetExport ? "export const widget" : ""}${!hasWidgetExport && !hasWidgetNameExport ? " und " : ""}${!hasWidgetNameExport ? "export const widgetName" : ""}`,
+  });
 
-  // 3. Export object contains all required AppPlugin fields
+  // 3. All required AppPlugin fields
   const requiredFields = ["metadata", "configFields", "statOptions", "supportedSizes", "renderHints", "fetchStats", "testConnection"];
   const missingFields: string[] = [];
   for (const field of requiredFields) {
     const fieldAsProperty = new RegExp(`\\b${field}\\s*[:(]`);
     const fieldAsAsync = new RegExp(`async\\s+${field}\\s*\\(`);
-    if (!fieldAsProperty.test(content) && !fieldAsAsync.test(content)) {
+    if (!fieldAsProperty.test(pluginCode) && !fieldAsAsync.test(pluginCode)) {
       missingFields.push(field);
     }
   }
-
-  if (missingFields.length === 0) {
-    checks.push({
-      check: "Contains all required AppPlugin fields",
-      passed: true,
-      detail: `All ${requiredFields.length} required fields found: ${requiredFields.join(", ")}`,
-    });
-  } else {
-    checks.push({
-      check: "Contains all required AppPlugin fields",
-      passed: false,
-      detail: `Missing fields: ${missingFields.join(", ")}`,
-    });
-  }
-
-  // 4. fetchStats is defined as async function
-  const asyncFetchStats = /async\s+fetchStats\s*\(/.test(content);
   checks.push({
-    check: "fetchStats is async",
-    passed: asyncFetchStats,
-    detail: asyncFetchStats
-      ? "fetchStats is defined as async function."
-      : "fetchStats is not defined with `async` keyword. It must return a Promise<PluginStats>.",
+    check: "Alle Pflicht-Felder von AppPlugin vorhanden",
+    passed: missingFields.length === 0,
+    detail:
+      missingFields.length === 0
+        ? `Alle ${requiredFields.length} Felder gefunden: ${requiredFields.join(", ")}`
+        : `Fehlende Felder: ${missingFields.join(", ")}`,
   });
 
-  // 5. testConnection is defined as async function
-  const asyncTestConnection = /async\s+testConnection\s*\(/.test(content);
+  // 4. fetchStats is async
   checks.push({
-    check: "testConnection is async",
-    passed: asyncTestConnection,
-    detail: asyncTestConnection
-      ? "testConnection is defined as async function."
-      : "testConnection is not defined with `async` keyword. It must return a Promise<{ ok: boolean; message: string }>.",
+    check: "fetchStats ist async",
+    passed: /async\s+fetchStats\s*\(/.test(pluginCode),
+    detail: /async\s+fetchStats\s*\(/.test(pluginCode)
+      ? "fetchStats ist async"
+      : "fetchStats ist NICHT async definiert",
   });
 
-  // 6. Uses shared utilities from utils.ts
-  const utilImportRegex = /from\s+["'].*utils["']/;
-  const usesSharedUtils = utilImportRegex.test(content);
+  // 5. testConnection is async
   checks.push({
-    check: "Uses shared utilities from utils.ts",
+    check: "testConnection ist async",
+    passed: /async\s+testConnection\s*\(/.test(pluginCode),
+    detail: /async\s+testConnection\s*\(/.test(pluginCode)
+      ? "testConnection ist async"
+      : "testConnection ist NICHT async definiert",
+  });
+
+  // 6. Uses shared utils
+  const usesSharedUtils = /from\s+["'].*utils["']/.test(pluginCode);
+  checks.push({
+    check: "Nutzt Shared Utilities",
     passed: usesSharedUtils,
     detail: usesSharedUtils
-      ? "Found import from utils.ts (getVisibleStats, normalizeUrl, etc.)"
-      : 'No import from "../../utils" found. Plugins should use shared utilities: getVisibleStats, normalizeUrl, createErrorResponse, createFetchOptions.',
+      ? "Import von utils.ts gefunden"
+      : 'Kein Import von "../../utils". Empfohlen: getVisibleStats, normalizeUrl, createErrorResponse, createFetchOptions.',
   });
 
-  // 7. No deprecated 'features' field in renderHints
-  const hasFeaturesField = /features\s*:\s*\[/.test(content);
+  // 7. No deprecated features
+  const hasFeaturesField = /features\s*:\s*\[/.test(pluginCode);
   checks.push({
-    check: "No deprecated features field in renderHints",
+    check: "Kein veraltetes features Feld",
     passed: !hasFeaturesField,
     detail: hasFeaturesField
-      ? 'Found deprecated `features` field in renderHints. Remove it -- the `features` field has been removed from SizeRenderHint.'
-      : "No deprecated `features` field found. Good.",
+      ? "Veraltetes `features` Feld gefunden. Entfernen."
+      : "Kein veraltetes Feld. Gut.",
   });
 
   return {
-    pluginId,
     checks,
     allPassed: checks.every((c) => c.passed),
   };
@@ -384,56 +437,57 @@ function testPluginExport(pluginId: string): ExportResult {
 
 export function registerTestTools(server: McpServer): void {
   server.tool(
-    "test_plugin_files",
-    "Checks if all required files for a plugin exist in the Dashboard project: index.ts in community/ or builtin/, export in community/index.ts (or registry.ts for builtin), and widget files if applicable. Icons are auto-resolved, no ICON_MAP check needed.",
+    "test_plugin_completeness",
+    "Tests whether all required files, exports, and fields are present for a complete plugin. Works standalone on code strings — no Dashboard access needed. Call AFTER writing plugin code to verify completeness before packaging.",
     {
-      pluginId: z.string().describe("The plugin ID (kebab-case), e.g. 'emby', 'opnsense'."),
+      pluginId: z.string().describe("The plugin ID (kebab-case), e.g. 'my-plugin'."),
+      pluginCode: z.string().describe("Full TypeScript source code of index.ts."),
+      manifestJson: z.string().optional().describe("Full JSON content of plugin.manifest.json."),
+      widgetCode: z.string().optional().describe("Full source code of the widget .tsx file (if applicable)."),
+      widgetFileName: z.string().optional().describe("Widget filename, e.g. 'MyWidget.tsx'."),
     },
-    async ({ pluginId }) => {
-      const checklist = testPluginFiles(pluginId);
+    async ({ pluginId, pluginCode, manifestJson, widgetCode, widgetFileName }) => {
+      const checklist = testPluginCompleteness({ pluginId, pluginCode, manifestJson, widgetCode, widgetFileName });
       return {
-        content: [
-          {
-            type: "text" as const,
-            text: JSON.stringify(checklist, null, 2),
-          },
-        ],
+        content: [{
+          type: "text" as const,
+          text: JSON.stringify(checklist, null, 2),
+        }],
       };
     },
   );
 
   server.tool(
-    "test_build_compile",
-    "Runs `npm run build` in the Dashboard project and reports success/failure with output. Timeout: 120 seconds.",
-    {},
-    async () => {
-      const buildResult = testBuildCompile();
+    "test_typescript_syntax",
+    "Performs basic TypeScript syntax validation: bracket balance, import paths, and common mistakes. Works standalone — no compiler or Dashboard needed. Call to catch syntax issues before packaging.",
+    {
+      pluginCode: z.string().describe("Full TypeScript source code of index.ts."),
+      widgetCode: z.string().optional().describe("Full source code of the widget .tsx file (if applicable)."),
+    },
+    async ({ pluginCode, widgetCode }) => {
+      const syntaxResult = testTypescriptSyntax({ pluginCode, widgetCode });
       return {
-        content: [
-          {
-            type: "text" as const,
-            text: JSON.stringify(buildResult, null, 2),
-          },
-        ],
+        content: [{
+          type: "text" as const,
+          text: JSON.stringify(syntaxResult, null, 2),
+        }],
       };
     },
   );
 
   server.tool(
     "test_plugin_export",
-    "Performs static analysis on a plugin's index.ts file to verify it has the correct export shape, required fields, async methods, shared utility usage, and no deprecated features field.",
+    "Performs static analysis on plugin source code to verify it has the correct export shape, required AppPlugin fields, async methods, shared utility usage, and no deprecated fields. Works standalone on code strings.",
     {
-      pluginId: z.string().describe("The plugin ID (kebab-case), e.g. 'emby', 'opnsense'."),
+      pluginCode: z.string().describe("Full TypeScript source code of the plugin's index.ts."),
     },
-    async ({ pluginId }) => {
-      const exportResult = testPluginExport(pluginId);
+    async ({ pluginCode }) => {
+      const exportResult = testPluginExport(pluginCode);
       return {
-        content: [
-          {
-            type: "text" as const,
-            text: JSON.stringify(exportResult, null, 2),
-          },
-        ],
+        content: [{
+          type: "text" as const,
+          text: JSON.stringify(exportResult, null, 2),
+        }],
       };
     },
   );

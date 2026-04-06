@@ -390,7 +390,7 @@ function generateTile2x2(
 export function registerPreviewTools(server: McpServer): void {
   server.tool(
     "preview_tile",
-    "Generates a self-contained HTML file that previews how a plugin's tiles will look in the Dominion Dashboard (glass-dark theme). The agent should write the returned HTML to a file and open it in the browser. Shows all supported tile sizes (1x1, 2x1, 2x2) with realistic dimensions (160px row height, 16px gap).",
+    "Generates a self-contained HTML preview of how tiles will look in the Dashboard (glass-dark theme). Write the HTML to a file and open in browser. Optional step AFTER implementing stats, BEFORE packaging with create_plugin_zip.",
     {
       pluginName: z.string().describe("Display name of the plugin, e.g. 'OPNsense'"),
       pluginColor: z.string().describe("Brand color as hex, e.g. '#D94F00'"),

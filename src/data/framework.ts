@@ -1,6 +1,10 @@
 // ─── Framework Knowledge Module ────────────────────────────────────────────
 // Complete documentation of the Dominion Dashboard Enhanced App system.
 // Served to AI agents via MCP tools to guide plugin development.
+//
+// LAST_SYNCED: 2026-04-06
+// DASHBOARD_VERSION: 1.0.6-alpha
+// SOURCE: Dashboard/src/plugins/types.ts, registry.ts, utils.ts, validator.ts
 // ────────────────────────────────────────────────────────────────────────────
 
 export const FRAMEWORK = {
@@ -555,5 +559,150 @@ Der Entwickler bestimmt nur, welche Daten und Visualisierungen darin erscheinen.
 - **Verbindungstest-Button:** UI und API-Aufruf an \`/api/enhanced/test\`
 - **Entity-Picker:** UI Komponente fuer \`crawlEntities\` Ergebnisse
 - **Stat-Auswahl:** Toggle-UI fuer jede statOption mit Persistierung in Config
+`,
+
+  agentWorkflow: `
+# Agent-Workflow: Plugin entwickeln in 10 Schritten
+
+> Dieser Workflow beschreibt den vollstaendigen Ablauf fuer einen AI-Agent,
+> der ein Plugin fuer das Dominion Dashboard entwickelt.
+> **WICHTIG: Arbeite IMMER in einem separaten Verzeichnis. Schreibe NIEMALS
+> direkt ins Dashboard-Projekt.** Das Ergebnis ist eine ZIP-Datei.
+
+## Schritt 1: Framework verstehen
+Rufe \`get_framework_overview\` auf.
+→ Verstehe das Enhanced App System, Plugin-Lifecycle, Tech Stack.
+
+## Schritt 2: Workflow kennen
+Du bist hier. Dieser Workflow gibt dir die Reihenfolge der Tool-Aufrufe.
+
+## Schritt 3: Anforderungen klaeren
+Klaere mit dem User:
+- Welchen Service soll das Plugin anbinden? (z.B. Proxmox, AdGuard, Plex)
+- Welche Daten sollen angezeigt werden? (z.B. CPU, RAM, Streams)
+- Braucht es ein Widget? (Karussell, Chart, Controls?)
+- Welche Tile-Groessen? (1x1 immer, 2x1 fuer Details, 2x2 fuer Widget)
+- Braucht es OAuth oder reicht API-Key?
+- Braucht es einen Entity-Crawler? (viele waehlbare Geraete/Container)
+
+## Schritt 4: Specs lesen
+Rufe auf (je nach Bedarf):
+- \`get_data_contracts\` → PluginStats, StatItem, ConfigField Interfaces
+- \`get_tile_size_spec\` (fuer jede gewuenschte Groesse) → Pixel-Dimensionen, Limits
+- \`get_widget_contract\` (falls Widget) → WidgetProps, WidgetHeader, Shared Components
+- \`get_entity_crawler_spec\` (falls Crawler) → CrawlEntityGroup Interface
+- \`get_performance_guidelines\` → Timeouts, Polling, Anti-Patterns
+- \`get_shared_utilities\` → Verfuegbare Hilfsfunktionen (getVisibleStats, formatBytes etc.)
+- \`get_shared_components\` (falls Widget) → WidgetHeader, CircularProgress etc. Quellcode
+
+## Schritt 5: Plugin generieren
+Rufe \`scaffold_plugin\` auf mit den gesammelten Parametern.
+→ Erhaeltst: plugin.manifest.json + index.ts mit TODOs
+
+## Schritt 6: Code anpassen
+Fuelle die TODO-Kommentare im generierten Code:
+- API-Endpoints des Ziel-Services einsetzen
+- Auth-Header konfigurieren (API-Key, Bearer Token, etc.)
+- fetchStats-Logik implementieren (Response parsen, StatItems bauen)
+- testConnection implementieren (Endpunkt pruefen, Fehlermeldungen)
+- Markenfarbe von simpleicons.org holen
+- Deutsche Labels und Beschreibungen
+
+## Schritt 7: Widget generieren (optional)
+Falls Widget gewuenscht: Rufe \`scaffold_widget\` auf.
+→ Erhaeltst: {Name}Widget.tsx mit Size-Varianten
+→ Widget-Code anpassen: widgetData nutzen, Visualisierung bauen
+
+## Schritt 8: Validieren
+Rufe auf:
+- \`validate_plugin_structure\` → Prueft alle 20+ Regeln
+- \`test_plugin_completeness\` → Prueft Vollstaendigkeit aller Dateien
+- \`test_plugin_export\` → Prueft Export-Shape
+- \`test_typescript_syntax\` → Prueft Klammern, Imports
+
+## Schritt 9: Preview (optional)
+Rufe \`preview_tile\` auf fuer eine visuelle HTML-Vorschau der Tiles.
+
+## Schritt 10: ZIP erstellen und ausliefern
+Rufe \`create_plugin_zip\` auf mit:
+- pluginId, manifestJson, pluginCode
+- Optional: widgetCode, widgetFileName, typesCode
+→ ZIP wird auf die Festplatte geschrieben
+→ Teile dem User den Dateipfad mit
+
+Der User installiert das Plugin:
+- **Via UI:** Dashboard > Einstellungen > Plugins > Upload
+- **Manuell:** ZIP entpacken nach \`src/plugins/community/\`, Server neustarten
+`,
+
+  deployment: `
+# Deployment & Installation
+
+## Wie das Dashboard betrieben wird
+
+Das Dominion Dashboard kann auf verschiedene Arten betrieben werden:
+- **Docker:** \`docker pull miguel1988/dominion:latest\` — laeuft irgendwo im Netzwerk
+- **Bare Metal:** Direkt auf einem Server mit Node.js installiert
+- **Entwicklung:** \`npm run dev\` auf dem lokalen Rechner
+
+**Fuer den Plugin-Entwickler ist der Betriebsmodus EGAL.** Plugins funktionieren
+identisch in allen Umgebungen.
+
+## Plugin-Installation (Sicht des Users)
+
+### Weg 1: ZIP-Upload ueber Dashboard UI (empfohlen)
+1. Dashboard oeffnen (z.B. \`http://192.168.1.100:3000\`)
+2. **Einstellungen** > **Plugins** > **Upload**
+3. ZIP-Datei auswaehlen (max 5 MB)
+4. Dashboard validiert: Manifest, Exports, Widget-Dateien
+5. Bei Erfolg: Plugin wird nach \`src/plugins/community/{id}/\` extrahiert
+6. **Server neustarten** (Button erscheint nach Upload)
+7. Plugin erscheint im Tile-Dialog unter der jeweiligen Kategorie
+
+### Weg 2: Manuelles Ablegen (nur bei Dateizugang)
+1. ZIP entpacken
+2. Ordner nach \`src/plugins/community/{id}/\` kopieren
+3. Server neustarten (\`npm run dev\` oder Docker Container neustarten)
+4. Auto-Discovery erkennt das Plugin automatisch
+
+## Wichtig fuer Plugin-Entwickler
+
+- **Keine Dashboard-URL im Plugin-Code!** Das Plugin kennt die Dashboard-URL nicht
+  und braucht sie auch nicht. Alle API-Aufrufe laufen ueber den Server.
+- **Service-URLs kommen vom User:** Der User gibt die URL seines Services
+  (z.B. Emby, Proxmox) ueber die \`configFields\` ein. Diese werden verschluesselt
+  in der Datenbank gespeichert.
+- **Kein Dateisystem-Zugriff noetig:** Plugins greifen nicht auf das Dateisystem zu.
+  Alles laeuft ueber \`fetchStats(config)\` -> HTTP-Request zum Ziel-Service.
+- **Docker-Netzwerk:** In Docker-Umgebungen muessen Service-URLs aus dem
+  Docker-Netzwerk erreichbar sein (z.B. \`http://emby:8096\` statt \`http://localhost:8096\`).
+  Das ist aber Sache des Users bei der Konfiguration, nicht des Plugins.
+
+## ZIP-Struktur fuer Upload
+
+\`\`\`
+mein-plugin.zip
+├── mein-plugin/                  # Ordner mit Plugin-ID als Name
+│   ├── plugin.manifest.json      # Pflicht: Manifest
+│   ├── index.ts                  # Pflicht: Plugin-Code
+│   ├── MeinPluginWidget.tsx      # Optional: Widget
+│   └── types.ts                  # Optional: Eigene Typen
+\`\`\`
+
+Hinweis: Der ZIP darf optional einen Wrapper-Ordner haben — die Upload-Logik
+erkennt und entfernt diesen automatisch.
+
+## Validierung beim Upload
+
+Das Dashboard prueft beim ZIP-Upload:
+1. ZIP ist lesbar und nicht korrupt
+2. Keine Path-Traversal-Attacken (\`../\`)
+3. \`plugin.manifest.json\` vorhanden und gueltiges JSON
+4. Alle Pflichtfelder: id, name, version, author, description
+5. ID ist kebab-case, Version ist semver
+6. \`index.ts\` vorhanden und exportiert \`const plugin\`
+7. Falls \`hasWidget: true\`: Widget-Datei vorhanden
+8. ID kollidiert nicht mit bestehenden Plugins
+9. Optional: \`minDashboardVersion\` Kompatibilitaet
 `,
 } as const;

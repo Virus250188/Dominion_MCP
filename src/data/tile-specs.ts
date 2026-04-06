@@ -1,6 +1,10 @@
 // ─── Tile Size Specifications Module ───────────────────────────────────────
 // Detailed specs for each tile size in the Dominion Dashboard.
 // Served to AI agents via MCP tools to guide plugin rendering decisions.
+//
+// LAST_SYNCED: 2026-04-06
+// DASHBOARD_VERSION: 1.0.6-alpha
+// SOURCE: Dashboard/src/components/dashboard/EnhancedTile.tsx, TileDialog.tsx
 // ────────────────────────────────────────────────────────────────────────────
 
 export const TILE_SPECS = {

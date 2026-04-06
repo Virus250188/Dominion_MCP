@@ -1,6 +1,10 @@
 // ─── Patterns & Best Practices Module ──────────────────────────────────────
 // Code patterns, anti-patterns, and implementation guidelines for Enhanced Apps.
 // Served to AI agents via MCP tools to guide correct plugin implementation.
+//
+// LAST_SYNCED: 2026-04-06
+// DASHBOARD_VERSION: 1.0.6-alpha
+// SOURCE: Dashboard/src/plugins/types.ts, utils.ts, builtin/emby/index.ts
 // ────────────────────────────────────────────────────────────────────────────
 
 export const PATTERNS = {
@@ -1651,5 +1655,248 @@ const processedItems = stats.items.map(item => ({  // Laeuft bei jedem Render!
 - [ ] Loading-State wird kurz sichtbar beim Laden
 - [ ] Error-State wird bei falscher Config angezeigt
 - [ ] visibleStats Toggle funktioniert (Stats erscheinen/verschwinden)
+`,
+
+  helloWorldExample: `
+# Hello World Plugin — Komplettes Minimal-Beispiel
+
+Dieses Beispiel zeigt ein vollstaendiges, funktionsfaehiges Plugin mit allen
+Pflicht-Exports, korrekten Imports und Error-Handling. Es kann als Vorlage
+fuer jedes neue Plugin dienen.
+
+## plugin.manifest.json
+
+\`\`\`json
+{
+  "id": "hello-world",
+  "name": "Hello World",
+  "version": "1.0.0",
+  "author": "Dein Name",
+  "description": "Minimales Beispiel-Plugin fuer das Dominion Dashboard"
+}
+\`\`\`
+
+## index.ts
+
+\`\`\`typescript
+import type { AppPlugin, PluginConfig } from "../../types";
+import {
+  getVisibleStats,
+  normalizeUrl,
+  createErrorResponse,
+  createFetchOptions,
+} from "../../utils";
+
+export const plugin: AppPlugin = {
+  metadata: {
+    id: "hello-world",
+    name: "Hello World",
+    icon: "Smile",                    // simple-icons Slug (simpleicons.org)
+    color: "#4CAF50",                 // Markenfarbe als Hex
+    description: "Zeigt an: Uptime und Status eines beliebigen HTTP-Endpunkts",
+    category: "Monitoring",
+  },
+
+  configFields: [
+    {
+      key: "apiUrl",
+      label: "Server URL",
+      type: "url",
+      required: true,
+      placeholder: "http://192.168.1.100:8080",
+      description: "URL des zu ueberwachenden Services",
+    },
+  ],
+
+  statOptions: [
+    {
+      key: "status",
+      label: "Status",
+      description: "Online/Offline Status des Services",
+      defaultEnabled: true,
+    },
+    {
+      key: "responseTime",
+      label: "Antwortzeit",
+      description: "HTTP-Antwortzeit in Millisekunden",
+      defaultEnabled: true,
+    },
+  ],
+
+  supportedSizes: ["1x1"],
+
+  renderHints: {
+    "1x1": { maxStats: 3, layout: "compact" },
+  },
+
+  async fetchStats(config: PluginConfig) {
+    const visibleStats = getVisibleStats(config, this.statOptions);
+    const baseUrl = normalizeUrl(config.apiUrl);
+
+    try {
+      const start = Date.now();
+      const res = await fetch(baseUrl, createFetchOptions(5000));
+      const responseTime = Date.now() - start;
+
+      const items = [];
+
+      if (visibleStats.includes("status")) {
+        items.push({
+          label: "Status",
+          value: res.ok ? "Online" : \`HTTP \${res.status}\`,
+          color: res.ok ? "green" : "red",
+        });
+      }
+
+      if (visibleStats.includes("responseTime")) {
+        items.push({
+          label: "Antwortzeit",
+          value: responseTime,
+          unit: "ms",
+          color: responseTime < 500 ? "green" : responseTime < 2000 ? "yellow" : "red",
+        });
+      }
+
+      return { items, status: "ok" };
+    } catch (err) {
+      return createErrorResponse(err);
+    }
+  },
+
+  async testConnection(config: PluginConfig) {
+    const baseUrl = normalizeUrl(config.apiUrl);
+    try {
+      const res = await fetch(baseUrl, createFetchOptions(5000));
+      if (res.ok) {
+        return { ok: true, message: \`Verbunden mit \${baseUrl}\` };
+      }
+      return { ok: false, message: \`HTTP \${res.status}: \${res.statusText}\` };
+    } catch (err) {
+      return { ok: false, message: (err as Error).message };
+    }
+  },
+};
+
+// Pflicht-Exports fuer Community Auto-Discovery
+export const widget = null;       // Kein Widget (nur 1x1)
+export const widgetName = null;   // Kein Widget-Name
+\`\`\`
+
+## Erklaerung der Schluessel-Patterns
+
+1. **Imports:** \`../../types\` fuer Interfaces, \`../../utils\` fuer Hilfsfunktionen
+   (diese Pfade sind korrekt im Dashboard nach dem Deployment)
+2. **visibleStats:** \`getVisibleStats(config, this.statOptions)\` — filtert nach User-Auswahl
+3. **normalizeUrl:** Entfernt trailing Slash von der URL
+4. **createFetchOptions(5000):** Erstellt RequestInit mit 5s AbortSignal.timeout
+5. **createErrorResponse:** Baut ein korrektes Error-PluginStats Objekt
+6. **try/catch:** Pflicht! Exceptions wuerden den Polling-Loop brechen
+7. **Deutsche Labels:** "Status", "Antwortzeit" — UI ist auf Deutsch
+8. **Farb-Konventionen:** green=gut, yellow=Warnung, red=schlecht
+9. **Drei Pflicht-Exports:** \`plugin\`, \`widget\`, \`widgetName\` (widget/widgetName = null wenn kein Widget)
+`,
+
+  sharedUtilitiesSource: `
+# Shared Utilities — Quellcode
+
+Diese Funktionen sind im Dashboard unter \`src/plugins/utils.ts\` verfuegbar.
+Plugins importieren sie mit \`import { ... } from "../../utils"\`.
+Dieser Import funktioniert nach dem Deployment im Dashboard automatisch.
+
+## Verfuegbare Funktionen
+
+\`\`\`typescript
+import type { PluginConfig, PluginStats, StatOption } from "./types";
+
+/**
+ * Ermittelt welche Stats sichtbar sind (User-Auswahl oder Defaults).
+ * Handles beide Formate: Array (neu) und JSON-String (alte DB-Daten).
+ */
+export function getVisibleStats(config: PluginConfig, statOptions: StatOption[]): string[] {
+  if (config.visibleStats) {
+    if (Array.isArray(config.visibleStats)) return config.visibleStats;
+    if (typeof config.visibleStats === "string") return JSON.parse(config.visibleStats);
+  }
+  return statOptions.filter((o) => o.defaultEnabled).map((o) => o.key);
+}
+
+/**
+ * Entfernt einen trailing Slash von der URL.
+ */
+export function normalizeUrl(url: string | unknown): string {
+  return String(url || "").replace(/\\/$/, "");
+}
+
+/**
+ * Erstellt ein Error-PluginStats Objekt aus einem gefangenen Fehler.
+ */
+export function createErrorResponse(err: unknown): PluginStats {
+  return { items: [], status: "error", error: (err as Error).message };
+}
+
+/**
+ * Erstellt ein RequestInit Objekt mit AbortSignal.timeout und optionalen Headers.
+ */
+export function createFetchOptions(timeout = 5000, headers?: Record<string, string>): RequestInit {
+  return { signal: AbortSignal.timeout(timeout), headers };
+}
+
+/**
+ * Formatiert Bytes in lesbaren String (z.B. "1.5 TB").
+ */
+export function formatBytes(bytes: number): string {
+  if (bytes === 0) return "0 B";
+  const k = 1024;
+  const sizes = ["B", "KB", "MB", "GB", "TB", "PB"];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + " " + sizes[i];
+}
+
+/**
+ * Formatiert Sekunden in lesbaren Uptime-String (z.B. "3d 5h").
+ */
+export function formatUptime(seconds: number): string {
+  const days = Math.floor(seconds / 86400);
+  const hours = Math.floor((seconds % 86400) / 3600);
+  if (days > 0) return \\\`\\\${days}d \\\${hours}h\\\`;
+  return \\\`\\\${hours}h\\\`;
+}
+\`\`\`
+
+## Verwendung im Plugin
+
+\`\`\`typescript
+import {
+  getVisibleStats,
+  normalizeUrl,
+  createErrorResponse,
+  createFetchOptions,
+  formatBytes,
+  formatUptime,
+} from "../../utils";
+
+// In fetchStats:
+const visibleStats = getVisibleStats(config, this.statOptions);
+const baseUrl = normalizeUrl(config.apiUrl);
+
+try {
+  const res = await fetch(\\\`\\\${baseUrl}/api/stats\\\`, createFetchOptions(5000, {
+    "Authorization": \\\`Bearer \\\${config.apiKey}\\\`,
+  }));
+  const data = await res.json();
+
+  const items = [];
+  if (visibleStats.includes("storage")) {
+    items.push({ label: "Belegt", value: formatBytes(data.usedBytes), color: "blue" });
+  }
+  if (visibleStats.includes("uptime")) {
+    items.push({ label: "Uptime", value: formatUptime(data.uptimeSeconds), color: "green" });
+  }
+
+  return { items, status: "ok" };
+} catch (err) {
+  return createErrorResponse(err);
+}
+\`\`\`
 `,
 } as const;

@@ -431,7 +431,7 @@ function validateRenderHints(renderHintsJson: string, supportedSizes: string[]):
 export function registerValidationTools(server: McpServer): void {
   server.tool(
     "validate_plugin_structure",
-    "Validates a plugin's TypeScript source code against the Dominion framework rules. Checks metadata, configFields, statOptions, supportedSizes, renderHints, fetchStats, and testConnection.",
+    "Validates plugin source code against all 20+ Dominion framework rules: metadata, configFields, statOptions, renderHints, exports, shared utilities. Call AFTER writing/customizing plugin code, BEFORE packaging with create_plugin_zip.",
     {
       pluginCode: z.string().describe("The full TypeScript source code of the plugin to validate."),
     },
@@ -450,7 +450,7 @@ export function registerValidationTools(server: McpServer): void {
 
   server.tool(
     "validate_stats_output",
-    "Validates a PluginStats JSON object against the expected schema. Checks items array, label/value types, optional fields, and status.",
+    "Validates a PluginStats JSON object against the schema: items array (max 6), label/value types, colors, status field. Use to verify the output format of fetchStats.",
     {
       statsJson: z.string().describe("JSON string of a PluginStats object to validate."),
     },
@@ -469,7 +469,7 @@ export function registerValidationTools(server: McpServer): void {
 
   server.tool(
     "validate_render_hints",
-    "Validates renderHints JSON against supported sizes. Checks maxStats limits, widget/compact layout rules, and completeness.",
+    "Validates renderHints JSON: checks that each supported size has an entry, maxStats within limits, widget/compact layout rules. Use alongside validate_plugin_structure for thorough validation.",
     {
       renderHintsJson: z.string().describe("JSON string of the renderHints object to validate."),
       supportedSizes: z.array(z.string()).describe('Array of supported sizes, e.g. ["1x1", "2x1", "2x2"].'),

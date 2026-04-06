@@ -533,14 +533,16 @@ function generateRegistrationSteps(params: {
 
   const steps: string[] = [];
 
-  // Step 1: Plugin folder + file
-  steps.push(`## Schritt 1: Plugin-Ordner anlegen
+  // Step 1: Prepare files in working directory
+  steps.push(`## Schritt 1: Plugin-Dateien vorbereiten
 
-**Ordner:** \`src/plugins/community/${pluginId}/\`
-**Datei:** \`src/plugins/community/${pluginId}/index.ts\`
+Erstelle einen Ordner \`${pluginId}/\` in deinem **Arbeitsverzeichnis** (NICHT im Dashboard!):
 
-Die Plugin-Datei wird mit \`scaffold_plugin\` generiert.
-Der Ordnername MUSS mit \`metadata.id\` uebereinstimmen.
+\`\`\`
+${pluginId}/
+  plugin.manifest.json   # Pflicht: Manifest mit ID, Name, Version, Autor
+  index.ts               # Pflicht: Plugin-Definition mit allen Exports${hasWidget ? `\n  ${widgetName}.tsx       # Widget-Komponente` : ""}
+\`\`\`
 
 Pflicht-Exports in index.ts:
 \`\`\`typescript
@@ -554,43 +556,61 @@ export const widgetName = ${hasWidget ? `"${widgetName}"` : "null"};${" ".repeat
   if (hasWidget) {
     steps.push(`## Schritt 2: Widget-Datei erstellen
 
-**Datei:** \`src/plugins/community/${pluginId}/${widgetName}.tsx\`
+**Datei:** \`${pluginId}/${widgetName}.tsx\`
 
 Die Widget-Datei wird mit \`scaffold_widget\` generiert.
-Das Widget liegt im GLEICHEN Ordner wie das Plugin (nicht in \`src/components/widgets/\`).
+Das Widget liegt im GLEICHEN Ordner wie das Plugin.
 `);
   }
 
-  // Step 3: Server restart
-  steps.push(`## Schritt ${hasWidget ? "3" : "2"}: Server neustarten
+  // Step 3: Create ZIP
+  steps.push(`## Schritt ${hasWidget ? "3" : "2"}: ZIP erstellen
 
-\`\`\`bash
-npm run dev    # Dev-Server (Auto-Discovery laeuft automatisch)
-npm run build  # Production Build
-\`\`\`
+Rufe \`create_plugin_zip\` auf mit:
+- \`pluginId\`: "${pluginId}"
+- \`manifestJson\`: Inhalt der plugin.manifest.json
+- \`pluginCode\`: Inhalt der index.ts${hasWidget ? `\n- \`widgetCode\`: Inhalt der ${widgetName}.tsx\n- \`widgetFileName\`: "${widgetName}.tsx"` : ""}
 
-**Keine weiteren Dateien bearbeiten!** Das Plugin wird automatisch erkannt.
+Das Tool validiert alle Dateien und erstellt eine ZIP-Datei auf der Festplatte.
+`);
+
+  // Step 4: Deliver to user
+  steps.push(`## Schritt ${hasWidget ? "4" : "3"}: ZIP dem User uebergeben
+
+Der User installiert das Plugin auf einem von zwei Wegen:
+
+### Weg A: Dashboard UI (empfohlen)
+1. Dashboard oeffnen > **Einstellungen** > **Plugins** > **Upload**
+2. ZIP-Datei auswaehlen und hochladen
+3. Dashboard neu starten (Button erscheint nach Upload)
+
+### Weg B: Manuell (nur bei direktem Dateizugang)
+1. ZIP entpacken
+2. Ordner nach \`src/plugins/community/${pluginId}/\` kopieren
+3. Server neustarten (\`npm run dev\` oder \`npm run build\`)
 `);
 
   steps.push(`## Hinweise
 
-- **Kein \`community/index.ts\` bearbeiten** - Wird automatisch generiert
-- **Kein \`registry.ts\` bearbeiten** - Community Plugins werden automatisch importiert
-- **Kein \`icons.ts\` bearbeiten** - Icons werden automatisch aus \`metadata.icon\` aufgeloest
-- **Kein \`widgets/registry.ts\` bearbeiten** - Community Widgets werden automatisch registriert
+- **NICHT ins Dashboard-Projekt schreiben!** Alle Dateien im Arbeitsverzeichnis erstellen
+- **Kein \`community/index.ts\` bearbeiten** — Wird automatisch generiert
+- **Kein \`registry.ts\` bearbeiten** — Community Plugins werden automatisch importiert
+- **Kein \`icons.ts\` bearbeiten** — Icons werden automatisch aus \`metadata.icon\` aufgeloest
+- **Kein \`widgets/registry.ts\` bearbeiten** — Community Widgets werden automatisch registriert
 - **Icon-Slug pruefen** auf https://simpleicons.org (PascalCase, z.B. "Emby", "Grafana")
 - **Ordnername = Plugin-ID** in \`metadata.id\` (kebab-case)
 `);
 
-  return `# Registrierungs-Schritte fuer ${pluginName}
+  return `# Auslieferungs-Schritte fuer ${pluginName}
 
 ${steps.join("\n---\n\n")}
 ## Zusammenfassung
 
-Betroffene Dateien (nur im eigenen Plugin-Ordner):
-1. \`src/plugins/community/${pluginId}/index.ts\` (Plugin + Exports)${hasWidget ? `\n2. \`src/plugins/community/${pluginId}/${widgetName}.tsx\` (Widget-Komponente)` : ""}
+Dateien im Plugin-Ordner:
+1. \`${pluginId}/plugin.manifest.json\` (Manifest)
+2. \`${pluginId}/index.ts\` (Plugin + Exports)${hasWidget ? `\n3. \`${pluginId}/${widgetName}.tsx\` (Widget-Komponente)` : ""}
 
-Sonst nichts. Ordner ablegen, Server neustarten, fertig.
+Workflow: Dateien erstellen -> \`create_plugin_zip\` aufrufen -> ZIP dem User geben.
 `;
 }
 
@@ -600,7 +620,7 @@ export function registerScaffoldTools(server: McpServer): void {
   // ── scaffold_plugin ───────────────────────────────────────────────────
   server.tool(
     "scaffold_plugin",
-    "Generates a complete plugin file (index.ts) for a new Enhanced App, including metadata, configFields, statOptions, renderHints, fetchStats skeleton, testConnection skeleton, and optional crawlEntities.",
+    "Generates a complete plugin file (index.ts + manifest) for a new Enhanced App. Call AFTER understanding the framework (get_framework_overview) and contracts (get_data_contracts). The generated code has TODO markers — customize before packaging with create_plugin_zip.",
     {
       id: z.string().describe("Plugin ID in kebab-case, e.g. 'my-plugin'"),
       name: z.string().describe("Display name, e.g. 'My Plugin'"),
@@ -681,7 +701,7 @@ export function registerScaffoldTools(server: McpServer): void {
         content: [
           {
             type: "text" as const,
-            text: `# Generierte Plugin-Dateien fuer: ${params.name}\n\n## 1. plugin.manifest.json\n\n\`\`\`json\n${manifest}\n\`\`\`\n\n## 2. index.ts\n\n\`\`\`typescript\n${code}\`\`\`\n\n**Naechste Schritte:**\n1. Ordner erstellen: \`${params.id}/\`\n2. \`plugin.manifest.json\` mit dem Manifest anlegen\n3. \`index.ts\` mit dem Plugin-Code anlegen\n4. TODO-Kommentare abarbeiten (API-Endpoints, Auth-Header, Markenfarbe, Author)\n5. Als ZIP liefern oder in \`src/plugins/community/\` ablegen`,
+            text: `# Generierte Plugin-Dateien fuer: ${params.name}\n\n## 1. plugin.manifest.json\n\n\`\`\`json\n${manifest}\n\`\`\`\n\n## 2. index.ts\n\n\`\`\`typescript\n${code}\`\`\`\n\n**Naechste Schritte:**\n1. TODO-Kommentare abarbeiten (API-Endpoints, Auth-Header, Markenfarbe, Author)\n2. Code mit \`validate_plugin_structure\` pruefen\n3. Mit \`create_plugin_zip\` als ZIP verpacken und dem User uebergeben`,
           },
         ],
       };
@@ -691,7 +711,7 @@ export function registerScaffoldTools(server: McpServer): void {
   // ── scaffold_widget ───────────────────────────────────────────────────
   server.tool(
     "scaffold_widget",
-    "Generates a widget component file for an Enhanced App, with size-specific sub-components (2x1 and/or 2x2), loading/error/ok state handling, WidgetHeader integration, and proper Tailwind CSS classes.",
+    "Generates a widget component (.tsx) with size-specific sub-components, state handling, and WidgetHeader. Call AFTER scaffold_plugin and get_widget_contract. The generated widget has TODO markers — customize, then package with create_plugin_zip.",
     {
       pluginId: z.string().describe("Plugin ID in kebab-case"),
       pluginName: z.string().describe("Plugin display name"),
@@ -731,7 +751,7 @@ export function registerScaffoldTools(server: McpServer): void {
         content: [
           {
             type: "text" as const,
-            text: `# Generierte Widget-Datei: src/plugins/community/${pluginId}/${widgetName}.tsx\n\n\`\`\`tsx\n${code}\`\`\`\n\n**Naechste Schritte:**\n1. Datei erstellen unter \`src/plugins/community/${pluginId}/${widgetName}.tsx\`\n2. TODO: Lucide-Icon im WidgetHeader anpassen (statt "Activity")\n3. In der Plugin \`index.ts\`: \`export const widget = ${widgetName};\` und \`export const widgetName = "${widgetName}";\`\n4. Sicherstellen dass \`renderHints.widgetComponent\` im Plugin auf "${widgetName}" gesetzt ist`,
+            text: `# Generierte Widget-Datei: ${pluginId}/${widgetName}.tsx\n\n\`\`\`tsx\n${code}\`\`\`\n\n**Naechste Schritte:**\n1. TODO: Lucide-Icon im WidgetHeader anpassen (statt "Activity")\n2. In der Plugin \`index.ts\`: \`export const widget = ${widgetName};\` und \`export const widgetName = "${widgetName}";\`\n3. Sicherstellen dass \`renderHints.widgetComponent\` im Plugin auf "${widgetName}" gesetzt ist\n4. Mit \`create_plugin_zip\` als ZIP verpacken (widgetCode + widgetFileName mitgeben)`,
           },
         ],
       };
@@ -741,7 +761,7 @@ export function registerScaffoldTools(server: McpServer): void {
   // ── get_registration_steps ────────────────────────────────────────────
   server.tool(
     "get_registration_steps",
-    "Returns the steps to register a new community plugin in the Dominion Dashboard. Plugins are auto-discovered: just drop the folder in community/, export plugin/widget/widgetName, and restart the server.",
+    "Returns the steps to deliver and install a plugin: create files, package as ZIP with create_plugin_zip, and hand to user for upload via Dashboard UI. Call AFTER all code is written and validated.",
     {
       pluginId: z.string().describe("Plugin ID in kebab-case"),
       pluginName: z.string().describe("Plugin display name"),
