@@ -683,15 +683,15 @@ identisch in allen Umgebungen.
 
 \`\`\`
 mein-plugin.zip
-├── mein-plugin/                  # Ordner mit Plugin-ID als Name
-│   ├── plugin.manifest.json      # Pflicht: Manifest
-│   ├── index.ts                  # Pflicht: Plugin-Code
-│   ├── MeinPluginWidget.tsx      # Optional: Widget
-│   └── types.ts                  # Optional: Eigene Typen
+├── plugin.manifest.json          # Pflicht: Manifest
+├── index.ts                      # Pflicht: Plugin-Code
+├── MeinPluginWidget.tsx           # Optional: Widget
+└── types.ts                      # Optional: Eigene Typen
 \`\`\`
 
-Hinweis: Der ZIP darf optional einen Wrapper-Ordner haben — die Upload-Logik
-erkennt und entfernt diesen automatisch.
+**WICHTIG:** Dateien muessen auf ROOT-Level der ZIP liegen (KEIN Wrapper-Ordner!).
+Das Dashboard extrahiert automatisch nach \`src/plugins/community/{manifest.id}/\`
+basierend auf der ID im Manifest.
 
 ## Validierung beim Upload
 

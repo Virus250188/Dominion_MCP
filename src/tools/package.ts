@@ -19,18 +19,6 @@ interface ManifestValidation {
   warnings: string[];
 }
 
-interface ZipResult {
-  success: boolean;
-  zipPath: string;
-  files: string[];
-  validation: {
-    manifestErrors: string[];
-    manifestWarnings: string[];
-    codeErrors: string[];
-    codeWarnings: string[];
-  };
-}
-
 // ─── Manifest Validation ─────────────────────────────────────────────────
 
 function validateManifest(manifestJson: string): ManifestValidation {
@@ -189,39 +177,38 @@ export function registerPackageTools(server: McpServer): void {
       // This is intentional: we want to help, not block
 
       // 5. Build ZIP in memory
+      // Files go at ROOT level (no wrapper folder). The Dashboard's upload handler
+      // extracts to src/plugins/community/{manifest.id}/ based on the manifest ID.
+      // A wrapper folder causes issues because adm-zip.addFile() does not create
+      // explicit directory entries, and the Dashboard's prefix detection relies on them.
       const zip = new AdmZip();
       const files: string[] = [];
 
       // Add manifest
-      const manifestPath = `${pluginId}/plugin.manifest.json`;
-      zip.addFile(manifestPath, Buffer.from(manifestJson, "utf-8"));
-      files.push(manifestPath);
+      zip.addFile("plugin.manifest.json", Buffer.from(manifestJson, "utf-8"));
+      files.push("plugin.manifest.json");
 
       // Add plugin code
-      const indexPath = `${pluginId}/index.ts`;
-      zip.addFile(indexPath, Buffer.from(pluginCode, "utf-8"));
-      files.push(indexPath);
+      zip.addFile("index.ts", Buffer.from(pluginCode, "utf-8"));
+      files.push("index.ts");
 
       // Add widget (if provided)
       if (widgetCode && widgetFileName) {
-        const widgetPath = `${pluginId}/${widgetFileName}`;
-        zip.addFile(widgetPath, Buffer.from(widgetCode, "utf-8"));
-        files.push(widgetPath);
+        zip.addFile(widgetFileName, Buffer.from(widgetCode, "utf-8"));
+        files.push(widgetFileName);
       }
 
       // Add types (if provided)
       if (typesCode) {
-        const typesPath = `${pluginId}/types.ts`;
-        zip.addFile(typesPath, Buffer.from(typesCode, "utf-8"));
-        files.push(typesPath);
+        zip.addFile("types.ts", Buffer.from(typesCode, "utf-8"));
+        files.push("types.ts");
       }
 
       // Add additional files
       if (additionalFiles) {
         for (const file of additionalFiles) {
-          const filePath = `${pluginId}/${file.fileName}`;
-          zip.addFile(filePath, Buffer.from(file.content, "utf-8"));
-          files.push(filePath);
+          zip.addFile(file.fileName, Buffer.from(file.content, "utf-8"));
+          files.push(file.fileName);
         }
       }
 
@@ -247,18 +234,6 @@ export function registerPackageTools(server: McpServer): void {
       }
 
       // 7. Build result report
-      const result: ZipResult = {
-        success: !hasBlockingErrors,
-        zipPath,
-        files,
-        validation: {
-          manifestErrors: manifestResult.errors,
-          manifestWarnings: manifestResult.warnings,
-          codeErrors: codeResult.errors,
-          codeWarnings: codeResult.warnings,
-        },
-      };
-
       const statusIcon = hasBlockingErrors ? "WARNUNG" : "OK";
       const sections: string[] = [
         `# ZIP erstellt: ${statusIcon}`,
