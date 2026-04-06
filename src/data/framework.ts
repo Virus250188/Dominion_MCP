@@ -3,7 +3,7 @@
 // Served to AI agents via MCP tools to guide plugin development.
 //
 // LAST_SYNCED: 2026-04-06
-// DASHBOARD_VERSION: 1.0.6-alpha
+// DASHBOARD_VERSION: 1.0.7-alpha
 // SOURCE: Dashboard/src/plugins/types.ts, registry.ts, utils.ts, validator.ts
 // ────────────────────────────────────────────────────────────────────────────
 
@@ -149,7 +149,8 @@ src/components/widgets/
 | \`/api/enhanced/[appId]\` | GET | Stats abrufen (ruft \`fetchStats\` auf, inkl. auto Token-Refresh) | Ja | Nein |
 | \`/api/enhanced/test\` | POST | Verbindung testen (\`{ enhancedType, config }\`) | Ja | Ja |
 | \`/api/enhanced/crawl\` | POST | Entities crawlen (\`{ enhancedType, config }\`) | Ja | Ja |
-| \`/api/enhanced/oauth/callback\` | GET | OAuth Callback (ruft \`exchangeToken\` auf, speichert Tokens) | Ja | Nein |
+| \`/api/enhanced/oauth/state\` | POST | HMAC-signierten OAuth State generieren (CSRF-Schutz) | Ja | Nein |
+| \`/api/enhanced/oauth/callback\` | GET | OAuth Callback (verifiziert HMAC-Signatur, ruft \`exchangeToken\` auf, speichert Tokens) | Ja | Nein |
 | \`/api/plugins/upload\` | POST | ZIP-Upload eines Community Plugins | Ja | Ja |
 
 ## Tech Stack

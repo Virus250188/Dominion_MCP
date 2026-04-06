@@ -3,7 +3,7 @@
 // Served to AI agents via MCP tools to guide plugin rendering decisions.
 //
 // LAST_SYNCED: 2026-04-06
-// DASHBOARD_VERSION: 1.0.6-alpha
+// DASHBOARD_VERSION: 1.0.7-alpha
 // SOURCE: Dashboard/src/components/dashboard/EnhancedTile.tsx, TileDialog.tsx
 // ────────────────────────────────────────────────────────────────────────────
 

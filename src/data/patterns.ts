@@ -3,7 +3,7 @@
 // Served to AI agents via MCP tools to guide correct plugin implementation.
 //
 // LAST_SYNCED: 2026-04-06
-// DASHBOARD_VERSION: 1.0.6-alpha
+// DASHBOARD_VERSION: 1.0.7-alpha
 // SOURCE: Dashboard/src/plugins/types.ts, utils.ts, builtin/emby/index.ts
 // ────────────────────────────────────────────────────────────────────────────
 
@@ -1811,11 +1811,19 @@ import type { PluginConfig, PluginStats, StatOption } from "./types";
 /**
  * Ermittelt welche Stats sichtbar sind (User-Auswahl oder Defaults).
  * Handles beide Formate: Array (neu) und JSON-String (alte DB-Daten).
+ * JSON.parse ist in try/catch gewrappt fuer robuste Fehlerbehandlung.
  */
 export function getVisibleStats(config: PluginConfig, statOptions: StatOption[]): string[] {
   if (config.visibleStats) {
     if (Array.isArray(config.visibleStats)) return config.visibleStats;
-    if (typeof config.visibleStats === "string") return JSON.parse(config.visibleStats);
+    if (typeof config.visibleStats === "string") {
+      try {
+        const parsed = JSON.parse(config.visibleStats);
+        if (Array.isArray(parsed)) return parsed;
+      } catch {
+        // Invalid JSON — fall through to defaults
+      }
+    }
   }
   return statOptions.filter((o) => o.defaultEnabled).map((o) => o.key);
 }
@@ -1853,13 +1861,16 @@ export function formatBytes(bytes: number): string {
 }
 
 /**
- * Formatiert Sekunden in lesbaren Uptime-String (z.B. "3d 5h").
+ * Formatiert Sekunden in lesbaren Uptime-String (z.B. "3d 5h", "2h 15m", "45m").
+ * Zeigt Minuten bei Werten unter 1 Stunde.
  */
 export function formatUptime(seconds: number): string {
   const days = Math.floor(seconds / 86400);
   const hours = Math.floor((seconds % 86400) / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
   if (days > 0) return \\\`\\\${days}d \\\${hours}h\\\`;
-  return \\\`\\\${hours}h\\\`;
+  if (hours > 0) return \\\`\\\${hours}h \\\${minutes}m\\\`;
+  return \\\`\\\${minutes}m\\\`;
 }
 \`\`\`
 
