@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { success, error } from "./_response.js";
 import AdmZip from "adm-zip";
 import fs from "node:fs";
 import path from "node:path";
@@ -10,6 +11,8 @@ import os from "node:os";
 const KEBAB_CASE_RE = /^[a-z0-9]+(-[a-z0-9]+)*$/;
 const SEMVER_RE = /^\d+\.\d+\.\d+/;
 const MANIFEST_REQUIRED_FIELDS = ["id", "name", "version", "author", "description"] as const;
+const MAX_FILE_SIZE = 512 * 1024;       // 500KB per file
+const MAX_TOTAL_SIZE = 2 * 1024 * 1024; // 2MB total
 
 // ─── Types ───────────────────────────────────────────────────────────────
 
@@ -17,6 +20,26 @@ interface ManifestValidation {
   valid: boolean;
   errors: string[];
   warnings: string[];
+}
+
+// ─── Security Helpers ───────────────────────────────────────────────────
+
+function isUnsafeFileName(fileName: string): boolean {
+  return (
+    fileName.includes("..") ||
+    fileName.includes("\\") ||
+    path.isAbsolute(fileName) ||
+    fileName.startsWith("/") ||
+    fileName.includes("\0")
+  );
+}
+
+function checkContentSize(content: string, fileName: string): string | null {
+  const size = Buffer.byteLength(content, "utf-8");
+  if (size > MAX_FILE_SIZE) {
+    return `Datei "${fileName}" ist ${Math.round(size / 1024)}KB gross, Maximum ist ${Math.round(MAX_FILE_SIZE / 1024)}KB.`;
+  }
+  return null;
 }
 
 // ─── Manifest Validation ─────────────────────────────────────────────────
@@ -36,7 +59,6 @@ function validateManifest(manifestJson: string): ManifestValidation {
     return { valid: false, errors: ["Manifest muss ein JSON-Objekt sein."], warnings };
   }
 
-  // Required fields
   for (const field of MANIFEST_REQUIRED_FIELDS) {
     const value = manifest[field];
     if (typeof value !== "string" || value.trim() === "") {
@@ -44,22 +66,18 @@ function validateManifest(manifestJson: string): ManifestValidation {
     }
   }
 
-  // ID must be kebab-case
   if (typeof manifest.id === "string" && !KEBAB_CASE_RE.test(manifest.id)) {
     errors.push(`"id" muss kebab-case sein (z.B. "mein-plugin"). Erhalten: "${manifest.id}"`);
   }
 
-  // Version must be semver
   if (typeof manifest.version === "string" && !SEMVER_RE.test(manifest.version)) {
     errors.push(`"version" muss semver-Format haben (z.B. "1.0.0"). Erhalten: "${manifest.version}"`);
   }
 
-  // Widget file check
   if (manifest.hasWidget === true && typeof manifest.widgetFile !== "string") {
     errors.push(`"hasWidget" ist true, aber "widgetFile" fehlt (z.B. "MeinWidget.tsx").`);
   }
 
-  // Optional warnings
   if (!manifest.minDashboardVersion) {
     warnings.push(`"minDashboardVersion" nicht gesetzt. Empfohlen fuer Kompatibilitaetspruefung.`);
   }
@@ -73,27 +91,22 @@ function quickValidateCode(pluginCode: string): { errors: string[]; warnings: st
   const errors: string[] = [];
   const warnings: string[] = [];
 
-  // Must have export const plugin
   if (!/export\s+const\s+plugin\s*[=:]/.test(pluginCode)) {
     errors.push('Fehlender Export: `export const plugin: AppPlugin = { ... }`');
   }
 
-  // Must have export const widget
   if (!/export\s+const\s+widget\s*=/.test(pluginCode)) {
     warnings.push('Fehlender Export: `export const widget = ...` (null falls kein Widget)');
   }
 
-  // Must have export const widgetName
   if (!/export\s+const\s+widgetName\s*=/.test(pluginCode)) {
     warnings.push('Fehlender Export: `export const widgetName = ...` (null falls kein Widget)');
   }
 
-  // Must have fetchStats
   if (!/fetchStats\s*[\(:]/.test(pluginCode) && !/async\s+fetchStats/.test(pluginCode)) {
     errors.push('Fehlende Funktion: `fetchStats`');
   }
 
-  // Must have testConnection
   if (!/testConnection\s*[\(:]/.test(pluginCode) && !/async\s+testConnection/.test(pluginCode)) {
     errors.push('Fehlende Funktion: `testConnection`');
   }
@@ -127,7 +140,7 @@ function quickValidateWidget(widgetCode: string): { errors: string[]; warnings: 
 export function registerPackageTools(server: McpServer): void {
   server.tool(
     "create_plugin_zip",
-    "FINAL STEP: Packages all plugin files into a ZIP for delivery. Validates manifest + code, then writes the ZIP to disk. Call this AFTER scaffold_plugin, code customization, and validate_plugin_structure. Returns the file path of the created ZIP.",
+    "[Phase 6: Paketieren] FINAL STEP. Packages plugin files into a validated ZIP. Call AFTER validate_plugin. Returns file path of the created ZIP.",
     {
       pluginId: z.string().describe("Plugin ID in kebab-case, e.g. 'my-plugin'. Must match manifest id."),
       manifestJson: z.string().describe("Full content of plugin.manifest.json as JSON string."),
@@ -139,13 +152,59 @@ export function registerPackageTools(server: McpServer): void {
         fileName: z.string().describe("File name relative to plugin root, e.g. 'helpers.ts'"),
         content: z.string().describe("Full file content"),
       })).optional().describe("Additional files to include in the ZIP."),
-      outputDir: z.string().optional().describe("Directory to write the ZIP file to. Defaults to the OS temp directory."),
     },
-    async ({ pluginId, manifestJson, pluginCode, widgetCode, widgetFileName, typesCode, additionalFiles, outputDir }) => {
-      // 1. Validate manifest
+    async ({ pluginId, manifestJson, pluginCode, widgetCode, widgetFileName, typesCode, additionalFiles }) => {
+      // ── Security: Validate pluginId ───────────────────────────────────
+      if (!KEBAB_CASE_RE.test(pluginId)) {
+        return error(`Ungueltige Plugin-ID: "${pluginId}". Muss kebab-case sein (a-z, 0-9, -).`);
+      }
+
+      // ── Security: Validate file names ─────────────────────────────────
+      if (widgetFileName && isUnsafeFileName(widgetFileName)) {
+        return error(`Ungueltiger Widget-Dateiname: "${widgetFileName}". Nur relative Pfade ohne ".." erlaubt.`);
+      }
+
+      if (additionalFiles) {
+        for (const file of additionalFiles) {
+          if (isUnsafeFileName(file.fileName)) {
+            return error(`Ungueltiger Dateiname: "${file.fileName}". Nur relative Pfade ohne ".." erlaubt.`);
+          }
+        }
+      }
+
+      // ── Security: Check file sizes ────────────────────────────────────
+      let totalSize = Buffer.byteLength(manifestJson, "utf-8") + Buffer.byteLength(pluginCode, "utf-8");
+
+      const sizeError = checkContentSize(pluginCode, "index.ts");
+      if (sizeError) return error(sizeError);
+
+      if (widgetCode) {
+        const wErr = checkContentSize(widgetCode, widgetFileName || "widget.tsx");
+        if (wErr) return error(wErr);
+        totalSize += Buffer.byteLength(widgetCode, "utf-8");
+      }
+
+      if (typesCode) {
+        const tErr = checkContentSize(typesCode, "types.ts");
+        if (tErr) return error(tErr);
+        totalSize += Buffer.byteLength(typesCode, "utf-8");
+      }
+
+      if (additionalFiles) {
+        for (const file of additionalFiles) {
+          const aErr = checkContentSize(file.content, file.fileName);
+          if (aErr) return error(aErr);
+          totalSize += Buffer.byteLength(file.content, "utf-8");
+        }
+      }
+
+      if (totalSize > MAX_TOTAL_SIZE) {
+        return error(`Gesamt-Inhalt ist ${Math.round(totalSize / 1024)}KB, Maximum ist ${Math.round(MAX_TOTAL_SIZE / 1024)}KB.`);
+      }
+
+      // ── Validate manifest ─────────────────────────────────────────────
       const manifestResult = validateManifest(manifestJson);
 
-      // Check pluginId matches manifest.id
       try {
         const manifest = JSON.parse(manifestJson);
         if (manifest.id && manifest.id !== pluginId) {
@@ -156,10 +215,10 @@ export function registerPackageTools(server: McpServer): void {
         }
       } catch { /* already caught by validateManifest */ }
 
-      // 2. Validate plugin code
+      // ── Validate plugin code ──────────────────────────────────────────
       const codeResult = quickValidateCode(pluginCode);
 
-      // 3. Validate widget code (if provided)
+      // ── Validate widget code (if provided) ────────────────────────────
       if (widgetCode) {
         if (!widgetFileName) {
           codeResult.errors.push("widgetCode angegeben aber widgetFileName fehlt.");
@@ -169,42 +228,30 @@ export function registerPackageTools(server: McpServer): void {
         codeResult.warnings.push(...widgetResult.warnings);
       }
 
-      // 4. Collect all validation results
+      // ── Collect all validation results ────────────────────────────────
       const allErrors = [...manifestResult.errors, ...codeResult.errors];
       const hasBlockingErrors = allErrors.length > 0;
 
-      // If there are blocking errors, report but still create ZIP (agent can fix and retry)
-      // This is intentional: we want to help, not block
-
-      // 5. Build ZIP in memory
-      // Files go at ROOT level (no wrapper folder). The Dashboard's upload handler
-      // extracts to src/plugins/community/{manifest.id}/ based on the manifest ID.
-      // A wrapper folder causes issues because adm-zip.addFile() does not create
-      // explicit directory entries, and the Dashboard's prefix detection relies on them.
+      // ── Build ZIP in memory ───────────────────────────────────────────
       const zip = new AdmZip();
       const files: string[] = [];
 
-      // Add manifest
       zip.addFile("plugin.manifest.json", Buffer.from(manifestJson, "utf-8"));
       files.push("plugin.manifest.json");
 
-      // Add plugin code
       zip.addFile("index.ts", Buffer.from(pluginCode, "utf-8"));
       files.push("index.ts");
 
-      // Add widget (if provided)
       if (widgetCode && widgetFileName) {
         zip.addFile(widgetFileName, Buffer.from(widgetCode, "utf-8"));
         files.push(widgetFileName);
       }
 
-      // Add types (if provided)
       if (typesCode) {
         zip.addFile("types.ts", Buffer.from(typesCode, "utf-8"));
         files.push("types.ts");
       }
 
-      // Add additional files
       if (additionalFiles) {
         for (const file of additionalFiles) {
           zip.addFile(file.fileName, Buffer.from(file.content, "utf-8"));
@@ -212,28 +259,18 @@ export function registerPackageTools(server: McpServer): void {
         }
       }
 
-      // 6. Write ZIP to disk
-      const targetDir = outputDir || os.tmpdir();
+      // ── Write ZIP to disk (always use temp dir) ───────────────────────
+      const targetDir = os.tmpdir();
       const zipFileName = `${pluginId}.zip`;
       const zipPath = path.join(targetDir, zipFileName).replace(/\\/g, "/");
 
       try {
-        // Ensure target directory exists
-        if (!fs.existsSync(targetDir)) {
-          fs.mkdirSync(targetDir, { recursive: true });
-        }
         zip.writeZip(zipPath);
       } catch (err) {
-        return {
-          content: [{
-            type: "text" as const,
-            text: `Fehler beim Schreiben der ZIP-Datei: ${(err as Error).message}\n\nVersuchter Pfad: ${zipPath}`,
-          }],
-          isError: true,
-        };
+        return error(`Fehler beim Schreiben der ZIP-Datei: ${(err as Error).message}\n\nVersuchter Pfad: ${zipPath}`);
       }
 
-      // 7. Build result report
+      // ── Build result report ───────────────────────────────────────────
       const statusIcon = hasBlockingErrors ? "WARNUNG" : "OK";
       const sections: string[] = [
         `# ZIP erstellt: ${statusIcon}`,
@@ -254,7 +291,21 @@ export function registerPackageTools(server: McpServer): void {
         sections.push("", "## Hinweise", ...allWarnings.map((w) => `- ${w}`));
       }
 
+      // Version-Bump reminder
+      let manifestVersion = "?";
+      try {
+        const m = JSON.parse(manifestJson);
+        if (typeof m.version === "string") manifestVersion = m.version;
+      } catch { /* ignore */ }
+
       sections.push(
+        "",
+        `## Version: ${manifestVersion}`,
+        "",
+        "**WICHTIG:** Bei jeder neuen ZIP die Version im Manifest hochzaehlen (semver):",
+        "- Bug-Fix: patch (1.0.0 -> 1.0.1)",
+        "- Neue Features: minor (1.0.0 -> 1.1.0)",
+        "- Breaking Changes: major (1.0.0 -> 2.0.0)",
         "",
         "## Naechste Schritte",
         "",
@@ -263,12 +314,7 @@ export function registerPackageTools(server: McpServer): void {
         "2. **Manuell:** ZIP entpacken und Ordner nach `src/plugins/community/` kopieren, dann Server neustarten",
       );
 
-      return {
-        content: [{
-          type: "text" as const,
-          text: sections.join("\n"),
-        }],
-      };
+      return success(sections.join("\n"));
     },
   );
 }

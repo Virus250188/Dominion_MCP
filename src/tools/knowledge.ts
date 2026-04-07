@@ -4,6 +4,7 @@ import { FRAMEWORK } from "../data/framework.js";
 import { TILE_SPECS } from "../data/tile-specs.js";
 import { PATTERNS } from "../data/patterns.js";
 import { COMPONENTS } from "../data/components.js";
+import { success, error } from "./_response.js";
 
 // ─── Knowledge Tools ──────────────────────────────────────────────────────
 // These tools provide structured knowledge about the Dominion Enhanced App
@@ -14,7 +15,7 @@ export function registerKnowledgeTools(server: McpServer): void {
   // ── get_framework_overview ────────────────────────────────────────────
   server.tool(
     "get_framework_overview",
-    "START HERE. Returns a high-level overview of the Enhanced App system, the plugin lifecycle, and what a developer needs to create. Call this FIRST before building any plugin, then call get_agent_workflow for the full development flow.",
+    "[Phase 1: Lernen] START HERE. Returns the Enhanced App system overview, plugin lifecycle, and developer scope. Call FIRST, then get_agent_workflow.",
     async () => {
       const text = [
         FRAMEWORK.overview,
@@ -22,27 +23,23 @@ export function registerKnowledgeTools(server: McpServer): void {
         FRAMEWORK.developerScope,
       ].join("\n\n---\n\n");
 
-      return {
-        content: [{ type: "text" as const, text }],
-      };
+      return success(text);
     },
   );
 
   // ── get_agent_workflow ────────────────────────────────────────────────
   server.tool(
     "get_agent_workflow",
-    "Returns the complete agent workflow with a 4-phase requirements checklist (understand service, ask user, design decisions, self-check) and the 10-step development flow. Call AFTER get_framework_overview. Includes guidance on when to ask questions vs when to code.",
+    "[Phase 1: Lernen] Returns the 4-phase requirements checklist and 10-step development flow. Call AFTER get_framework_overview.",
     async () => {
-      return {
-        content: [{ type: "text" as const, text: FRAMEWORK.agentWorkflow }],
-      };
+      return success(FRAMEWORK.agentWorkflow);
     },
   );
 
   // ── get_tile_size_spec ────────────────────────────────────────────────
   server.tool(
     "get_tile_size_spec",
-    "Returns the detailed specification for a specific tile size, including ASCII diagram, pixel dimensions, stat limits, layout variants, and renderHints examples. Call when choosing or implementing a specific tile size.",
+    "[Phase 1: Lernen] Returns tile size spec with ASCII diagram, pixel dimensions, stat limits, and renderHints examples.",
     {
       size: z
         .string()
@@ -51,15 +48,7 @@ export function registerKnowledgeTools(server: McpServer): void {
     async ({ size }) => {
       const validSizes = ["1x1", "2x1", "2x2"];
       if (!validSizes.includes(size)) {
-        return {
-          content: [
-            {
-              type: "text" as const,
-              text: `Ungueltige Groesse: "${size}". Gueltige Groessen sind: ${validSizes.join(", ")}`,
-            },
-          ],
-          isError: true,
-        };
+        return error(`Ungueltige Groesse: "${size}". Gueltige Groessen sind: ${validSizes.join(", ")}`);
       }
 
       const spec = TILE_SPECS[size as "1x1" | "2x1" | "2x2"];
@@ -75,31 +64,27 @@ export function registerKnowledgeTools(server: McpServer): void {
         spec.spec,
       ].join("\n");
 
-      return {
-        content: [{ type: "text" as const, text }],
-      };
+      return success(text);
     },
   );
 
   // ── get_tile_size_comparison ──────────────────────────────────────────
   server.tool(
     "get_tile_size_comparison",
-    "Returns a comparison table of all three tile sizes and a decision guide for choosing the right size. Useful when deciding which sizes to support.",
+    "[Phase 1: Lernen] Returns comparison table of all tile sizes and decision guide for choosing sizes.",
     async () => {
       const text = [TILE_SPECS.comparison, TILE_SPECS.decisionGuide].join(
         "\n\n---\n\n",
       );
 
-      return {
-        content: [{ type: "text" as const, text }],
-      };
+      return success(text);
     },
   );
 
   // ── get_data_contracts ────────────────────────────────────────────────
   server.tool(
     "get_data_contracts",
-    "Returns the TypeScript data contracts: PluginStats, StatItem, ConfigField, StatOption interfaces, the fetchStats pattern with visibleStats, the widgetData pattern, and color conventions. Call BEFORE writing fetchStats logic.",
+    "[Phase 1: Lernen] Returns TypeScript data contracts: PluginStats, StatItem, ConfigField, StatOption, fetchStats pattern, widgetData, colors. Call BEFORE writing code.",
     async () => {
       const text = [
         PATTERNS.pluginStructure,
@@ -108,16 +93,14 @@ export function registerKnowledgeTools(server: McpServer): void {
         PATTERNS.colorConventions,
       ].join("\n\n---\n\n");
 
-      return {
-        content: [{ type: "text" as const, text }],
-      };
+      return success(text);
     },
   );
 
   // ── get_widget_contract ───────────────────────────────────────────────
   server.tool(
     "get_widget_contract",
-    "Returns the widget component contract: WidgetProps interface, widget rules, WidgetHeader usage, registration pattern, the TileDialog UX, and the Widget-Actions pattern. Call BEFORE implementing a widget component.",
+    "[Phase 1: Lernen] Returns widget contract: WidgetProps, widget rules, WidgetHeader, TileDialog UX, Widget-Actions pattern. Call BEFORE implementing widgets.",
     async () => {
       const text = [
         PATTERNS.widgetPattern,
@@ -125,77 +108,63 @@ export function registerKnowledgeTools(server: McpServer): void {
         PATTERNS.tileDialogUx,
       ].join("\n\n---\n\n");
 
-      return {
-        content: [{ type: "text" as const, text }],
-      };
+      return success(text);
     },
   );
 
   // ── get_entity_crawler_spec ───────────────────────────────────────────
   server.tool(
     "get_entity_crawler_spec",
-    "Returns the entity crawler specification: CrawlEntityGroup interface, when to implement, the Test-Crawl-Pick flow. Only needed for plugins with selectable entities (smart home, containers).",
+    "[Phase 1: Lernen] Returns entity crawler spec: CrawlEntityGroup interface, Test-Crawl-Pick flow. Only for plugins with selectable entities.",
     async () => {
-      return {
-        content: [
-          { type: "text" as const, text: PATTERNS.crawlEntitiesPattern },
-        ],
-      };
+      return success(PATTERNS.crawlEntitiesPattern);
     },
   );
 
   // ── get_performance_guidelines ────────────────────────────────────────
   server.tool(
     "get_performance_guidelines",
-    "Returns performance rules and anti-patterns: timeouts, polling, rendering, tab behavior, and common mistakes. Good to check before finalizing plugin code.",
+    "[Phase 1: Lernen] Returns performance rules and anti-patterns: timeouts, polling, rendering, tab behavior. Check before finalizing code.",
     async () => {
       const text = [PATTERNS.performanceRules, PATTERNS.antiPatterns].join(
         "\n\n---\n\n",
       );
 
-      return {
-        content: [{ type: "text" as const, text }],
-      };
+      return success(text);
     },
   );
 
   // ── get_implementation_checklist ──────────────────────────────────────
   server.tool(
     "get_implementation_checklist",
-    "Returns the complete implementation checklist covering all aspects of plugin development. Use as a final review before packaging.",
+    "[Phase 4: Validieren] Returns the complete implementation checklist. Use as final review before packaging.",
     async () => {
-      return {
-        content: [{ type: "text" as const, text: PATTERNS.checklist }],
-      };
+      return success(PATTERNS.checklist);
     },
   );
 
   // ── get_hello_world_example ──────────────────────────────────────────
   server.tool(
     "get_hello_world_example",
-    "Returns a complete, minimal, working plugin example (Hello World) with manifest + index.ts. Shows correct imports, exports, error handling, and all patterns. Great starting point for understanding plugin structure.",
+    "[Phase 1: Lernen] Returns a complete Hello World plugin example (manifest + index.ts). Great starting point for understanding plugin structure.",
     async () => {
-      return {
-        content: [{ type: "text" as const, text: PATTERNS.helloWorldExample }],
-      };
+      return success(PATTERNS.helloWorldExample);
     },
   );
 
   // ── get_shared_utilities ─────────────────────────────────────────────
   server.tool(
     "get_shared_utilities",
-    "Returns the full source code of the Dashboard's shared utility functions (getVisibleStats, normalizeUrl, createErrorResponse, createFetchOptions, formatBytes, formatUptime). Shows exactly what each function does so agents can use them correctly. The import `../../utils` resolves after deployment.",
+    "[Phase 1: Lernen] Returns source code of shared utilities: getVisibleStats, normalizeUrl, createErrorResponse, createFetchOptions, formatBytes, formatUptime.",
     async () => {
-      return {
-        content: [{ type: "text" as const, text: PATTERNS.sharedUtilitiesSource }],
-      };
+      return success(PATTERNS.sharedUtilitiesSource);
     },
   );
 
   // ── get_shared_components ────────────────────────────────────────────
   server.tool(
     "get_shared_components",
-    "Returns the source code and documentation of all shared widget components: WidgetHeader, CircularProgress, SparklineChart, HorizontalProgressBar, ControlButton. Shows props, usage examples, and the WidgetProps interface. Call when building a widget component.",
+    "[Phase 1: Lernen] Returns source code of shared widget components: WidgetHeader, CircularProgress, SparklineChart, HorizontalProgressBar, ControlButton.",
     async () => {
       const text = [
         COMPONENTS.overview,
@@ -206,16 +175,14 @@ export function registerKnowledgeTools(server: McpServer): void {
         COMPONENTS.controlButton,
       ].join("\n\n---\n\n");
 
-      return {
-        content: [{ type: "text" as const, text }],
-      };
+      return success(text);
     },
   );
 
   // ── get_app_design_guide ──────────────────────────────────────────────
   server.tool(
     "get_app_design_guide",
-    "Returns guidance for designing a good Enhanced App: what makes a proper app (vs just a hyperlink), Service-Type to Widget-Design mapping (Media, Monitoring, Smart Home, Network, Storage, Downloads), and the complete TileDialog UX flow with timing gates. Call EARLY — after get_framework_overview, BEFORE scaffold_plugin.",
+    "[Phase 2: Entwerfen] Returns app design guidance: Service-Type to Widget-Design mapping, TileDialog UX flow. Call AFTER get_framework_overview, BEFORE scaffold_plugin.",
     async () => {
       const text = [
         FRAMEWORK.appDesignGuidance,
@@ -223,20 +190,16 @@ export function registerKnowledgeTools(server: McpServer): void {
         PATTERNS.tileDialogFlow,
       ].join("\n\n---\n\n");
 
-      return {
-        content: [{ type: "text" as const, text }],
-      };
+      return success(text);
     },
   );
 
   // ── get_deployment_guide ─────────────────────────────────────────────
   server.tool(
     "get_deployment_guide",
-    "Returns the deployment and installation guide: how plugins are installed (ZIP upload via UI or manual), Docker considerations, ZIP structure, and upload validation rules. Call when preparing the final deliverable.",
+    "[Phase 6: Paketieren] Returns deployment and installation guide: ZIP upload, manual install, Docker, upload validation rules.",
     async () => {
-      return {
-        content: [{ type: "text" as const, text: FRAMEWORK.deployment }],
-      };
+      return success(FRAMEWORK.deployment);
     },
   );
 }

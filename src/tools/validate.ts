@@ -1,37 +1,139 @@
 import { z } from "zod";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { validationResponse, type ValidationIssue } from "./_response.js";
 
 // ─── Types ────────────────────────────────────────────────────────────────
 
 interface ValidationResult {
-  errors: string[];
-  warnings: string[];
+  [key: string]: unknown;
+  errors: ValidationIssue[];
+  warnings: ValidationIssue[];
   passed: boolean;
 }
 
-function result(errors: string[], warnings: string[]): ValidationResult {
+function result(errors: ValidationIssue[], warnings: ValidationIssue[]): ValidationResult {
   return { errors, warnings, passed: errors.length === 0 };
 }
 
-// ─── validate_plugin_structure ────────────────────────────────────────────
+function err(message: string, fix?: string): ValidationIssue {
+  return fix ? { message, fix } : { message };
+}
 
-function validatePluginStructure(pluginCode: string): ValidationResult {
-  const errors: string[] = [];
-  const warnings: string[] = [];
+function warn(message: string, fix?: string): ValidationIssue {
+  return fix ? { message, fix } : { message };
+}
+
+// ─── validate_plugin (consolidated) ──────────────────────────────────────
+
+function validatePlugin(params: {
+  pluginCode: string;
+  pluginId?: string;
+  manifestJson?: string;
+  widgetCode?: string;
+  widgetFileName?: string;
+}): ValidationResult {
+  const { pluginCode, pluginId, manifestJson, widgetCode } = params;
+  const errors: ValidationIssue[] = [];
+  const warnings: ValidationIssue[] = [];
+
+  // ── Manifest Validation (merged from test_plugin_completeness) ──────
+
+  if (manifestJson) {
+    try {
+      const manifest = JSON.parse(manifestJson) as Record<string, unknown>;
+      const requiredFields = ["id", "name", "version", "author", "description"];
+      const missingFields = requiredFields.filter(
+        (f) => typeof manifest[f] !== "string" || (manifest[f] as string).trim() === "",
+      );
+
+      if (missingFields.length > 0) {
+        errors.push(err(
+          `Manifest: Fehlende Pflichtfelder: ${missingFields.join(", ")}`,
+          `Ergaenze in plugin.manifest.json:\n${missingFields.map((f) => `  "${f}": "..."`).join(",\n")}`,
+        ));
+      }
+
+      // ID matches pluginId
+      if (pluginId && manifest.id && manifest.id !== pluginId) {
+        errors.push(err(
+          `Manifest ID "${String(manifest.id)}" stimmt nicht mit pluginId "${pluginId}" ueberein.`,
+          `Setze "id": "${pluginId}" im Manifest.`,
+        ));
+      }
+
+      // kebab-case check
+      if (typeof manifest.id === "string" && !/^[a-z0-9]+(-[a-z0-9]+)*$/.test(manifest.id)) {
+        errors.push(err(
+          `Manifest ID "${manifest.id}" ist kein gueltiges kebab-case.`,
+          `Erlaubt: Kleinbuchstaben, Ziffern, Bindestriche. Beispiel: "mein-plugin"`,
+        ));
+      }
+
+      // semver check
+      if (typeof manifest.version === "string" && !/^\d+\.\d+\.\d+/.test(manifest.version)) {
+        errors.push(err(
+          `Manifest Version "${manifest.version}" ist kein gueltiges semver.`,
+          `Verwende Format x.y.z, z.B. "1.0.0"`,
+        ));
+      }
+
+      // Widget file consistency
+      if (manifest.hasWidget === true) {
+        if (typeof manifest.widgetFile !== "string") {
+          errors.push(err(
+            `Manifest: "hasWidget" ist true, aber "widgetFile" fehlt.`,
+            `Ergaenze: "widgetFile": "MeinWidget.tsx"`,
+          ));
+        }
+        if (!widgetCode) {
+          warnings.push(warn(
+            `Manifest: "hasWidget" ist true, aber kein widgetCode wurde uebergeben.`,
+            `Uebergib den Widget-Code als widgetCode Parameter.`,
+          ));
+        }
+      }
+
+      if (!manifest.minDashboardVersion) {
+        warnings.push(warn(
+          `Manifest: "minDashboardVersion" nicht gesetzt.`,
+          `Empfohlen fuer Kompatibilitaet: "minDashboardVersion": "1.0.7"`,
+        ));
+      }
+    } catch {
+      errors.push(err(
+        "Manifest ist kein gueltiges JSON.",
+        `Stelle sicher, dass der manifestJson-String gueltiges JSON ist. Beispiel:\n{\n  "id": "mein-plugin",\n  "name": "Mein Plugin",\n  "version": "1.0.0",\n  "author": "Name",\n  "description": "Beschreibung"\n}`,
+      ));
+    }
+  }
+
+  // ── Plugin Code Validation ──────────────────────────────────────────
 
   // 1. Has metadata object with required fields
   const metadataMatch = pluginCode.match(/metadata\s*:\s*\{/);
   if (!metadataMatch) {
-    errors.push("Missing `metadata` object in plugin definition.");
+    errors.push(err(
+      "Missing `metadata` object in plugin definition.",
+      `Ergaenze:\nmetadata: {\n  id: "mein-plugin",\n  name: "Mein Plugin",\n  icon: "Activity",\n  color: "#000000",\n  description: "Beschreibung",\n  category: "Custom",\n},`,
+    ));
   } else {
     const requiredMetaFields = ["id", "name", "icon", "color", "description", "category"];
+    const metaStart = pluginCode.indexOf("metadata");
+    const afterMeta = pluginCode.slice(metaStart, metaStart + 800);
     for (const field of requiredMetaFields) {
-      const fieldRegex = new RegExp(`metadata\\s*:\\s*\\{[^}]*?${field}\\s*:`);
-      // Use a more forgiving approach: search for the field anywhere after metadata
-      const metaStart = pluginCode.indexOf("metadata");
-      const afterMeta = pluginCode.slice(metaStart, metaStart + 800);
       if (!afterMeta.includes(`${field}:`)) {
-        errors.push(`metadata is missing required field: ${field}`);
+        const examples: Record<string, string> = {
+          id: 'id: "mein-plugin",',
+          name: 'name: "Mein Plugin",',
+          icon: 'icon: "Activity",  // PascalCase Slug von simpleicons.org',
+          color: 'color: "#000000",  // Hex-Farbe von simpleicons.org',
+          description: 'description: "Kurze Beschreibung",',
+          category: 'category: "Custom",  // Storage | Media | Network | Automation | System | Monitoring | Downloads | Security | Productivity | Development | Custom',
+        };
+        errors.push(err(
+          `metadata is missing required field: ${field}`,
+          `Ergaenze in metadata: ${examples[field] || `${field}: "..."`}`,
+        ));
       }
     }
   }
@@ -40,12 +142,14 @@ function validatePluginStructure(pluginCode: string): ValidationResult {
   const idMatch = pluginCode.match(/id\s*:\s*["']([^"']+)["']/);
   if (idMatch) {
     if (!/^[a-z][a-z0-9-]*$/.test(idMatch[1])) {
-      errors.push(`metadata.id "${idMatch[1]}" is not kebab-case. Must match /^[a-z][a-z0-9-]*$/.`);
+      errors.push(err(
+        `metadata.id "${idMatch[1]}" is not kebab-case. Must match /^[a-z][a-z0-9-]*$/.`,
+        `Verwende nur Kleinbuchstaben, Ziffern und Bindestriche. Beispiel: "mein-plugin"`,
+      ));
     }
   } else {
-    // Only warn if metadata exists (error for missing metadata already added above)
     if (metadataMatch) {
-      warnings.push("Could not extract metadata.id value for validation.");
+      warnings.push(warn("Could not extract metadata.id value for validation."));
     }
   }
 
@@ -53,40 +157,61 @@ function validatePluginStructure(pluginCode: string): ValidationResult {
   const colorMatch = pluginCode.match(/color\s*:\s*["']([^"']+)["']/);
   if (colorMatch) {
     if (!/^#[0-9a-fA-F]{6}$/.test(colorMatch[1])) {
-      errors.push(`metadata.color "${colorMatch[1]}" is not a valid hex color. Must match #XXXXXX format.`);
+      errors.push(err(
+        `metadata.color "${colorMatch[1]}" is not a valid hex color. Must match #XXXXXX format.`,
+        `Verwende eine 6-stellige Hex-Farbe: "#52b54b". Finde die Markenfarbe auf simpleicons.org.`,
+      ));
     }
   } else {
     if (metadataMatch) {
-      warnings.push("Could not extract metadata.color value for validation.");
+      warnings.push(warn("Could not extract metadata.color value for validation."));
     }
   }
 
   // 4. Has configFields array
   if (!/configFields\s*:\s*\[/.test(pluginCode)) {
-    errors.push("Missing `configFields` array.");
+    errors.push(err(
+      "Missing `configFields` array.",
+      `Ergaenze:\nconfigFields: [\n  { key: "apiUrl", label: "Server URL", type: "url", required: true, placeholder: "http://localhost:8096" },\n],`,
+    ));
   }
 
   // 5. Has statOptions array with at least one defaultEnabled: true
   if (!/statOptions\s*:\s*\[/.test(pluginCode)) {
-    errors.push("Missing `statOptions` array.");
+    errors.push(err(
+      "Missing `statOptions` array.",
+      `Ergaenze:\nstatOptions: [\n  { key: "status", label: "Status", description: "Aktueller Status", defaultEnabled: true },\n],`,
+    ));
   } else {
     if (!/defaultEnabled\s*:\s*true/.test(pluginCode)) {
-      errors.push("statOptions must have at least one entry with `defaultEnabled: true`.");
+      errors.push(err(
+        "statOptions must have at least one entry with `defaultEnabled: true`.",
+        `Setze bei mindestens einer statOption: defaultEnabled: true`,
+      ));
     }
   }
 
   // 6. Has supportedSizes array containing "1x1"
   if (!/supportedSizes\s*:\s*\[/.test(pluginCode)) {
-    errors.push("Missing `supportedSizes` array.");
+    errors.push(err(
+      "Missing `supportedSizes` array.",
+      `Ergaenze: supportedSizes: ["1x1", "2x1"],`,
+    ));
   } else {
     if (!/supportedSizes\s*:\s*\[[\s\S]*?["']1x1["']/.test(pluginCode)) {
-      errors.push('supportedSizes must contain "1x1".');
+      errors.push(err(
+        'supportedSizes must contain "1x1".',
+        `"1x1" ist Pflicht. Beispiel: supportedSizes: ["1x1", "2x1"]`,
+      ));
     }
   }
 
   // 7. Has renderHints object
   if (!/renderHints\s*:\s*\{/.test(pluginCode)) {
-    errors.push("Missing `renderHints` object.");
+    errors.push(err(
+      "Missing `renderHints` object.",
+      `Ergaenze:\nrenderHints: {\n  "1x1": { maxStats: 3, layout: "compact" },\n},`,
+    ));
   }
 
   // 8. For each size in supportedSizes, check renderHints has a matching key
@@ -97,7 +222,12 @@ function validatePluginStructure(pluginCode: string): ValidationResult {
     for (const size of sizes) {
       const hintKeyRegex = new RegExp(`["']${size}["']\\s*:`);
       if (!hintKeyRegex.test(pluginCode)) {
-        errors.push(`renderHints is missing key for supported size "${size}".`);
+        const maxStats = size === "1x1" ? 3 : 6;
+        const layout = size === "1x1" ? "compact" : "detailed";
+        errors.push(err(
+          `renderHints is missing key for supported size "${size}".`,
+          `Ergaenze in renderHints:\n"${size}": { maxStats: ${maxStats}, layout: "${layout}" }`,
+        ));
       }
     }
   }
@@ -108,69 +238,95 @@ function validatePluginStructure(pluginCode: string): ValidationResult {
     const hintBody = hint[1];
     if (/layout\s*:\s*["']widget["']/.test(hintBody)) {
       if (!/widgetComponent\s*:/.test(hintBody)) {
-        errors.push(`renderHint with layout "widget" is missing widgetComponent.`);
+        errors.push(err(
+          `renderHint with layout "widget" is missing widgetComponent.`,
+          `Ergaenze: widgetComponent: "MeinWidget"  // Name der exportierten Widget-Komponente`,
+        ));
       }
     }
   }
 
   // 10. Has fetchStats function/method
   if (!/fetchStats\s*[\(:]/.test(pluginCode) && !/async\s+fetchStats/.test(pluginCode)) {
-    errors.push("Missing `fetchStats` function/method.");
+    errors.push(err(
+      "Missing `fetchStats` function/method.",
+      `Ergaenze:\nasync fetchStats(config: PluginConfig): Promise<PluginStats> {\n  try {\n    const visibleStats = getVisibleStats(config, this.statOptions);\n    const baseUrl = normalizeUrl(config.apiUrl);\n    // ... API-Abfrage ...\n    return { items: [...], status: "ok" };\n  } catch (err) {\n    return createErrorResponse(err);\n  }\n}`,
+    ));
   }
 
   // 11. Has testConnection function/method
   if (!/testConnection\s*[\(:]/.test(pluginCode) && !/async\s+testConnection/.test(pluginCode)) {
-    errors.push("Missing `testConnection` function/method.");
+    errors.push(err(
+      "Missing `testConnection` function/method.",
+      `Ergaenze:\nasync testConnection(config: PluginConfig): Promise<{ ok: boolean; message: string }> {\n  try {\n    const baseUrl = normalizeUrl(config.apiUrl);\n    const res = await fetch(baseUrl + "/api/status", createFetchOptions());\n    if (!res.ok) return { ok: false, message: "HTTP " + res.status };\n    return { ok: true, message: "Verbunden" };\n  } catch (err) {\n    return { ok: false, message: (err as Error).message };\n  }\n}`,
+    ));
   }
 
-  // 12. fetchStats contains AbortSignal.timeout
+  // 12-14. fetchStats body checks
   const fetchStatsBody = extractFunctionBody(pluginCode, "fetchStats");
   if (fetchStatsBody) {
-    if (!fetchStatsBody.includes("AbortSignal.timeout")) {
-      warnings.push("fetchStats should use `AbortSignal.timeout` for request timeouts.");
+    // AbortSignal check: skip if createFetchOptions is used (it includes AbortSignal.timeout internally)
+    if (!fetchStatsBody.includes("AbortSignal.timeout") && !fetchStatsBody.includes("createFetchOptions")) {
+      warnings.push(warn(
+        "fetchStats should use `AbortSignal.timeout` for request timeouts.",
+        `Nutze createFetchOptions() welches bereits AbortSignal.timeout(8000) beinhaltet:\nconst res = await fetch(url, { ...createFetchOptions(), headers });`,
+      ));
     }
 
-    // 13. fetchStats contains try/catch
     if (!/try\s*\{/.test(fetchStatsBody)) {
-      warnings.push("fetchStats should contain a try/catch block for error handling.");
+      warnings.push(warn(
+        "fetchStats should contain a try/catch block for error handling.",
+        `Wrappe den fetchStats-Body:\ntry {\n  // ... API-Logik ...\n  return { items, status: "ok" };\n} catch (err) {\n  return createErrorResponse(err);\n}`,
+      ));
     }
 
-    // 14. fetchStats contains visibleStats pattern
     if (!fetchStatsBody.includes("visibleStats")) {
-      warnings.push("fetchStats should use the `visibleStats` pattern to filter stats by user selection.");
+      warnings.push(warn(
+        "fetchStats should use the `visibleStats` pattern to filter stats by user selection.",
+        `Am Anfang von fetchStats:\nconst visibleStats = getVisibleStats(config, this.statOptions);\n\nDann pro Stat:\nif (visibleStats.includes("meineStatKey")) {\n  items.push({ label: "Mein Stat", value: 42 });\n}`,
+      ));
     }
   }
 
-  // 15. All fetch() calls have signal parameter (or use createFetchOptions which includes it)
+  // 15. All fetch() calls have signal parameter
   const usesCreateFetchOptions = pluginCode.includes("createFetchOptions");
   if (!usesCreateFetchOptions) {
     const fetchCalls = [...pluginCode.matchAll(/fetch\s*\([^)]*\{([^}]*)\}/g)];
     for (const call of fetchCalls) {
       const fetchOptions = call[1];
       if (!/signal\s*:/.test(fetchOptions)) {
-        warnings.push("A fetch() call is missing the `signal` parameter with AbortSignal.timeout.");
+        warnings.push(warn(
+          "A fetch() call is missing the `signal` parameter with AbortSignal.timeout.",
+          `Nutze: fetch(url, { ...createFetchOptions(), headers })  // createFetchOptions() hat signal eingebaut`,
+        ));
       }
     }
   }
 
-  // 16. Check for shared utilities usage (helpful hint, not blocking)
+  // 16. Check for shared utilities usage
   const utilImportRegex = /from\s+["'].*utils["']/;
   if (!utilImportRegex.test(pluginCode)) {
-    warnings.push(
-      'Plugin does not import shared utilities from "../../utils". ' +
-      'Consider using: getVisibleStats, normalizeUrl, createErrorResponse, createFetchOptions, formatBytes, formatUptime.'
-    );
+    warnings.push(warn(
+      'Plugin does not import shared utilities from "../../utils".',
+      `Ergaenze am Dateianfang:\nimport { getVisibleStats, normalizeUrl, createErrorResponse, createFetchOptions } from "../../utils";`,
+    ));
   }
 
-  // 17. Check metadata.icon format (PascalCase or lowercase, no spaces)
+  // 17. Check metadata.icon format
   const iconMatch = pluginCode.match(/icon\s*:\s*["']([^"']+)["']/);
   if (iconMatch) {
     const iconSlug = iconMatch[1];
     if (/\s/.test(iconSlug)) {
-      errors.push(`metadata.icon "${iconSlug}" contains spaces. Must be a valid simple-icons slug (PascalCase, no spaces, e.g. "Emby").`);
+      errors.push(err(
+        `metadata.icon "${iconSlug}" contains spaces. Must be a valid simple-icons slug.`,
+        `Verwende PascalCase ohne Leerzeichen, z.B. "Emby", "HomeAssistant". Pruefe auf simpleicons.org.`,
+      ));
     }
     if (!/^[A-Za-z][A-Za-z0-9]*$/.test(iconSlug)) {
-      warnings.push(`metadata.icon "${iconSlug}" may not be a valid simple-icons slug. Expected PascalCase like "Emby" or "Grafana". Check https://simpleicons.org.`);
+      warnings.push(warn(
+        `metadata.icon "${iconSlug}" may not be a valid simple-icons slug. Expected PascalCase like "Emby" or "Grafana".`,
+        `Pruefe den Icon-Slug auf https://simpleicons.org`,
+      ));
     }
   }
 
@@ -178,65 +334,156 @@ function validatePluginStructure(pluginCode: string): ValidationResult {
   const renderHintsBlock = pluginCode.match(/renderHints\s*:\s*\{([\s\S]*?)\}\s*,?\s*\n\s*\n/);
   if (renderHintsBlock) {
     if (/features\s*:/.test(renderHintsBlock[1])) {
-      errors.push('renderHints contains deprecated `features` field. The `features` field has been removed from SizeRenderHint.');
+      errors.push(err(
+        'renderHints contains deprecated `features` field.',
+        `Entferne das "features" Array aus renderHints. Es wurde aus SizeRenderHint entfernt.`,
+      ));
     }
   }
 
-  // 19. widgetData consistency: if renderHints has widget layout, suggest using widgetData
+  // 19. widgetData consistency
   const hasWidgetLayout = /layout\s*:\s*["']widget["']/.test(pluginCode);
   const usesWidgetData = /widgetData\s*[=:{]/.test(pluginCode) || /widgetData\s*:/.test(pluginCode);
   if (hasWidgetLayout && !usesWidgetData) {
-    warnings.push(
-      'Plugin has layout "widget" in renderHints but does not return widgetData. ' +
-      'Consider using widgetData in fetchStats for rich widget rendering (cover images, lists, etc.). ' +
-      'Example: return { items, status: "ok", widgetData: { recentItems: [...] } }'
-    );
+    warnings.push(warn(
+      'Plugin has layout "widget" in renderHints but does not return widgetData.',
+      `Ergaenze in fetchStats return:\nreturn { items, status: "ok", widgetData: { recentItems: [...] } };`,
+    ));
   }
 
-  // 20. Check configField feature-fields pattern: non-connection, non-required fields
-  //     should use type "select" or "number" (informational)
+  // 20. Check configField feature-fields pattern
   const hasSelectFields = /type\s*:\s*["']select["']/.test(pluginCode);
   if (hasWidgetLayout && !hasSelectFields) {
-    warnings.push(
-      'Plugin has widget layout but no select-type configFields. ' +
-      'Consider adding widget-specific config options (e.g. carouselSpeed, mediaCategory) ' +
-      'as select fields that appear after the connection test passes.'
-    );
+    warnings.push(warn(
+      'Plugin has widget layout but no select-type configFields.',
+      `Erwaege widget-spezifische Config-Optionen als select-Felder:\n{ key: "displayMode", label: "Anzeigemodus", type: "select", required: false }`,
+    ));
   }
 
-  // 21. Auto-Discovery: Check for standardized exports (community plugins)
+  // 21. Auto-Discovery: Check for standardized exports
   const hasStandardPluginExport = /export\s+const\s+plugin\s*[=:]/.test(pluginCode);
   const hasWidgetExport = /export\s+const\s+widget\s*=/.test(pluginCode);
   const hasWidgetNameExport = /export\s+const\s+widgetName\s*=/.test(pluginCode);
 
   if (!hasStandardPluginExport) {
-    // Check if it uses the legacy {name}Plugin format
     const legacyExport = /export\s+const\s+\w+Plugin\s*[=:]/.test(pluginCode);
     if (legacyExport) {
-      warnings.push(
-        'Plugin uses legacy export format (export const {name}Plugin). ' +
-        'Community plugins must use: export const plugin: AppPlugin = { ... }'
-      );
+      warnings.push(warn(
+        'Plugin uses legacy export format (export const {name}Plugin).',
+        `Community Plugins muessen verwenden:\nexport const plugin: AppPlugin = { ... };`,
+      ));
     } else {
-      errors.push(
-        'Missing `export const plugin`. Community plugins must export: ' +
-        'export const plugin: AppPlugin = { ... }'
-      );
+      errors.push(err(
+        'Missing `export const plugin`.',
+        `Ergaenze:\nexport const plugin: AppPlugin = {\n  metadata: { ... },\n  configFields: [...],\n  statOptions: [...],\n  supportedSizes: [...],\n  renderHints: { ... },\n  async fetchStats(config) { ... },\n  async testConnection(config) { ... },\n};`,
+      ));
     }
   }
 
   if (!hasWidgetExport) {
-    warnings.push(
-      'Missing `export const widget`. Community plugins must export: ' +
-      'export const widget = MyWidget; (or null if no widget)'
-    );
+    warnings.push(warn(
+      'Missing `export const widget`.',
+      `Ergaenze (Pflicht fuer Auto-Discovery):\nexport const widget = MeinWidget;  // oder null falls kein Widget`,
+    ));
   }
 
   if (!hasWidgetNameExport) {
-    warnings.push(
-      'Missing `export const widgetName`. Community plugins must export: ' +
-      'export const widgetName = "MyWidget"; (or null if no widget)'
-    );
+    warnings.push(warn(
+      'Missing `export const widgetName`.',
+      `Ergaenze (Pflicht fuer Auto-Discovery):\nexport const widgetName = "MeinWidget";  // oder null falls kein Widget`,
+    ));
+  }
+
+  // 22. fetchStats is async
+  if (/fetchStats\s*[\(:]/.test(pluginCode) && !/async\s+fetchStats\s*\(/.test(pluginCode)) {
+    // fetchStats exists but is not marked async
+    warnings.push(warn(
+      "fetchStats is not declared as async.",
+      `Aendere zu: async fetchStats(config: PluginConfig): Promise<PluginStats> { ... }`,
+    ));
+  }
+
+  // 23. testConnection is async
+  if (/testConnection\s*[\(:]/.test(pluginCode) && !/async\s+testConnection\s*\(/.test(pluginCode)) {
+    warnings.push(warn(
+      "testConnection is not declared as async.",
+      `Aendere zu: async testConnection(config: PluginConfig): Promise<{ ok: boolean; message: string }> { ... }`,
+    ));
+  }
+
+  // 24. crawlEntities + selectedEntities compatibility
+  const hasCrawlEntities = /crawlEntities\s*[\(:]/.test(pluginCode) || /async\s+crawlEntities/.test(pluginCode);
+  if (hasCrawlEntities) {
+    // Check that fetchStats reads selectedEntities
+    if (fetchStatsBody && !fetchStatsBody.includes("selectedEntities")) {
+      warnings.push(warn(
+        "Plugin hat crawlEntities aber fetchStats liest config.selectedEntities nicht.",
+        `Wenn crawlEntities implementiert ist, speichert der Entity-Picker die Auswahl als config.selectedEntities.\nErgaenze in fetchStats:\nlet entityConfig = parseEntityConfig(config.selectedEntities);\nif (entityConfig.length === 0 && config.entityIds) {\n  entityConfig = parseEntityConfig(config.entityIds); // Legacy-Fallback\n}`,
+      ));
+    }
+
+    // Check that configFields don't include an entity textarea (redundant with picker)
+    if (/key\s*:\s*["']entityIds["']/.test(pluginCode)) {
+      warnings.push(warn(
+        "Plugin hat crawlEntities UND ein entityIds ConfigField. Das ist redundant.",
+        `Entferne das entityIds-Feld aus configFields. Der Entity-Picker des Dashboards uebernimmt die Auswahl automatisch.\nconfigFields sollte nur Connection-Felder enthalten (apiUrl, apiKey).`,
+      ));
+    }
+  }
+
+  // 25. Feature-Field visibility warning
+  const CONNECTION_KEYS = new Set(["apiUrl", "apiKey", "accessToken", "username", "password"]);
+  const WIDGET_ONLY_KEYS = new Set(["carouselSpeed", "carouselItems"]);
+  const configFieldMatches = [...pluginCode.matchAll(/\{\s*key\s*:\s*["']([^"']+)["'][^}]*?required\s*:\s*(true|false)/g)];
+  for (const match of configFieldMatches) {
+    const key = match[1];
+    const isRequired = match[2] === "true";
+
+    if (!isRequired && !CONNECTION_KEYS.has(key)) {
+      // Check for oauth type
+      const fieldBlock = pluginCode.slice(Math.max(0, match.index! - 20), match.index! + match[0].length + 100);
+      const isOAuth = /type\s*:\s*["']oauth["']/.test(fieldBlock);
+
+      if (!isOAuth) {
+        if (WIDGET_ONLY_KEYS.has(key)) {
+          warnings.push(warn(
+            `ConfigField "${key}" ist ein Widget-Only Key — wird nur bei Widget-Layout (2x1/2x2) angezeigt (Dashboard WIDGET_ONLY_KEYS).`,
+          ));
+        } else {
+          warnings.push(warn(
+            `ConfigField "${key}" ist nicht required und kein Connection-Key — es wird erst nach erfolgreichem Verbindungstest sichtbar. Ist das beabsichtigt?`,
+            `Connection-Keys (sofort sichtbar): apiUrl, apiKey, accessToken, username, password.\nAlle anderen Felder erscheinen erst NACH dem Verbindungstest als "Feature-Fields".`,
+          ));
+        }
+      }
+    }
+  }
+
+  // ── Widget Validation (merged from test_plugin_completeness) ────────
+
+  if (widgetCode) {
+    const hasUseClient = widgetCode.includes('"use client"') || widgetCode.includes("'use client'");
+    if (!hasUseClient) {
+      errors.push(err(
+        'Widget: Missing "use client" directive.',
+        `Fuege als erste Zeile der Widget-Datei hinzu:\n"use client";`,
+      ));
+    }
+
+    const hasWidgetHeader = widgetCode.includes("WidgetHeader");
+    if (!hasWidgetHeader) {
+      warnings.push(warn(
+        "Widget: WidgetHeader nicht verwendet.",
+        `Importiere und verwende WidgetHeader fuer eine konsistente Kopfzeile:\nimport { WidgetHeader } from "../shared/WidgetHeader";\n\n<WidgetHeader icon="Activity" iconColor="#000" title="Mein Plugin" status="online" />`,
+      ));
+    }
+
+    if (!/export\s+(function|const|default)/.test(widgetCode)) {
+      errors.push(err(
+        "Widget: Kein Export gefunden.",
+        `Das Widget muss exportiert werden:\nexport function MeinWidget(props: WidgetProps) { ... }`,
+      ));
+    }
   }
 
   return result(errors, warnings);
@@ -244,13 +491,11 @@ function validatePluginStructure(pluginCode: string): ValidationResult {
 
 /**
  * Best-effort extraction of a method/function body by name.
- * Finds the opening brace after the function signature and matches braces.
  */
 function extractFunctionBody(code: string, funcName: string): string | null {
   const funcIndex = code.search(new RegExp(`(async\\s+)?${funcName}\\s*\\(`));
   if (funcIndex === -1) return null;
 
-  // Find the opening brace of the function body
   const afterSignature = code.indexOf("{", funcIndex);
   if (afterSignature === -1) return null;
 
@@ -271,87 +516,109 @@ function extractFunctionBody(code: string, funcName: string): string | null {
 // ─── validate_stats_output ────────────────────────────────────────────────
 
 function validateStatsOutput(statsJson: string): ValidationResult {
-  const errors: string[] = [];
-  const warnings: string[] = [];
+  const errors: ValidationIssue[] = [];
+  const warnings: ValidationIssue[] = [];
 
-  // 1. Is valid JSON
   let parsed: unknown;
   try {
     parsed = JSON.parse(statsJson);
   } catch {
-    errors.push("Invalid JSON: could not parse the stats output.");
+    errors.push(err(
+      "Invalid JSON: could not parse the stats output.",
+      `Stelle sicher dass der JSON-String gueltig ist. Erwartetes Format:\n{ "items": [...], "status": "ok" }`,
+    ));
     return result(errors, warnings);
   }
 
   if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-    errors.push("Stats output must be a JSON object, not an array or primitive.");
+    errors.push(err(
+      "Stats output must be a JSON object, not an array or primitive.",
+      `Erwartetes Format:\n{ "items": [...], "status": "ok" }`,
+    ));
     return result(errors, warnings);
   }
 
   const stats = parsed as Record<string, unknown>;
 
-  // 2. Has items array
   if (!Array.isArray(stats.items)) {
-    errors.push("Missing `items` array in stats output.");
+    errors.push(err(
+      "Missing `items` array in stats output.",
+      `Ergaenze:\n"items": [\n  { "label": "Status", "value": "Online" }\n]`,
+    ));
   } else {
     const items = stats.items as unknown[];
 
-    // 3. items.length <= 6
     if (items.length > 6) {
-      errors.push(`items array has ${items.length} entries, maximum is 6.`);
+      errors.push(err(
+        `items array has ${items.length} entries, maximum is 6.`,
+        `Reduziere die items auf maximal 6. Verwende statOptions + visibleStats um dem User die Auswahl zu ueberlassen.`,
+      ));
     }
 
-    // 4. Each item has label (non-empty string) and value (string or number)
     const validColors = new Set(["green", "red", "yellow", "blue"]);
 
     for (let i = 0; i < items.length; i++) {
       const item = items[i] as Record<string, unknown>;
       if (typeof item !== "object" || item === null) {
-        errors.push(`items[${i}] is not an object.`);
+        errors.push(err(`items[${i}] is not an object.`, `Jedes Item muss ein Objekt sein: { "label": "...", "value": "..." }`));
         continue;
       }
 
       if (typeof item.label !== "string" || item.label.trim() === "") {
-        errors.push(`items[${i}].label must be a non-empty string.`);
+        errors.push(err(
+          `items[${i}].label must be a non-empty string.`,
+          `Ergaenze: "label": "Mein Label"`,
+        ));
       }
 
       if (typeof item.value !== "string" && typeof item.value !== "number") {
-        errors.push(`items[${i}].value must be a string or number.`);
+        errors.push(err(
+          `items[${i}].value must be a string or number.`,
+          `Wert muss string oder number sein: "value": 42 oder "value": "Online"`,
+        ));
       }
 
-      // 5. Optional fields validation
       if (item.unit !== undefined && typeof item.unit !== "string") {
-        errors.push(`items[${i}].unit must be a string if provided.`);
+        errors.push(err(`items[${i}].unit must be a string if provided.`, `Beispiel: "unit": "GB"`));
       }
 
       if (item.icon !== undefined && typeof item.icon !== "string") {
-        errors.push(`items[${i}].icon must be a string if provided.`);
+        errors.push(err(`items[${i}].icon must be a string if provided.`, `Verwende einen Lucide-Icon-Namen: "icon": "HardDrive"`));
       }
 
       if (item.color !== undefined) {
         if (typeof item.color !== "string" || !validColors.has(item.color)) {
-          errors.push(`items[${i}].color must be one of: green, red, yellow, blue. Got "${String(item.color)}".`);
+          errors.push(err(
+            `items[${i}].color must be one of: green, red, yellow, blue. Got "${String(item.color)}".`,
+            `Gueltige Farben: "green", "red", "yellow", "blue"`,
+          ));
         }
       }
     }
   }
 
-  // 6. Has status field
   if (stats.status !== "ok" && stats.status !== "error") {
-    errors.push('Missing or invalid `status` field. Must be "ok" or "error".');
+    errors.push(err(
+      'Missing or invalid `status` field. Must be "ok" or "error".',
+      `Ergaenze: "status": "ok"  // oder "error" bei Fehlern`,
+    ));
   }
 
-  // 7. If status is "error", should have error string
   if (stats.status === "error") {
     if (typeof stats.error !== "string" || stats.error.trim() === "") {
-      warnings.push('status is "error" but no `error` message string is provided.');
+      warnings.push(warn(
+        'status is "error" but no `error` message string is provided.',
+        `Ergaenze: "error": "Verbindung fehlgeschlagen: Connection refused"`,
+      ));
     }
   }
 
-  // 8. widgetData validation (optional field)
   if (stats.widgetData !== undefined) {
     if (typeof stats.widgetData !== "object" || stats.widgetData === null || Array.isArray(stats.widgetData)) {
-      errors.push("widgetData must be a plain object (Record<string, unknown>), not an array or primitive.");
+      errors.push(err(
+        "widgetData must be a plain object (Record<string, unknown>), not an array or primitive.",
+        `Verwende ein Objekt: "widgetData": { "recentItems": [...] }`,
+      ));
     }
   }
 
@@ -361,64 +628,67 @@ function validateStatsOutput(statsJson: string): ValidationResult {
 // ─── validate_render_hints ────────────────────────────────────────────────
 
 function validateRenderHints(renderHintsJson: string, supportedSizes: string[]): ValidationResult {
-  const errors: string[] = [];
-  const warnings: string[] = [];
+  const errors: ValidationIssue[] = [];
+  const warnings: ValidationIssue[] = [];
 
-  // 1. Parse JSON
   let hints: Record<string, unknown>;
   try {
     hints = JSON.parse(renderHintsJson);
   } catch {
-    errors.push("Invalid JSON: could not parse render hints.");
+    errors.push(err(
+      "Invalid JSON: could not parse render hints.",
+      `Erwartetes Format:\n{ "1x1": { "maxStats": 3, "layout": "compact" } }`,
+    ));
     return result(errors, warnings);
   }
 
   if (typeof hints !== "object" || hints === null || Array.isArray(hints)) {
-    errors.push("renderHints must be a JSON object.");
+    errors.push(err("renderHints must be a JSON object.", `Verwende ein Objekt mit Size-Keys.`));
     return result(errors, warnings);
   }
 
-  // 2. Every supportedSize must have an entry in renderHints
   for (const size of supportedSizes) {
     if (!(size in hints)) {
-      errors.push(`renderHints is missing entry for supported size "${size}".`);
+      const maxStats = size === "1x1" ? 3 : 6;
+      const layout = size === "1x1" ? "compact" : "detailed";
+      errors.push(err(
+        `renderHints is missing entry for supported size "${size}".`,
+        `Ergaenze: "${size}": { "maxStats": ${maxStats}, "layout": "${layout}" }`,
+      ));
     }
   }
 
-  // Validate each hint entry
-  const maxStatsLimits: Record<string, number> = {
-    "1x1": 3,
-    "2x1": 6,
-    "2x2": 6,
-  };
+  const maxStatsLimits: Record<string, number> = { "1x1": 3, "2x1": 6, "2x2": 6 };
 
   for (const [size, hintValue] of Object.entries(hints)) {
     if (typeof hintValue !== "object" || hintValue === null) {
-      errors.push(`renderHints["${size}"] must be an object.`);
+      errors.push(err(`renderHints["${size}"] must be an object.`, `Verwende: "${size}": { "maxStats": 3, "layout": "compact" }`));
       continue;
     }
 
     const hint = hintValue as Record<string, unknown>;
 
-    // 3/4/5. maxStats limits
     if (typeof hint.maxStats === "number") {
       const limit = maxStatsLimits[size];
       if (limit !== undefined && hint.maxStats > limit) {
-        warnings.push(`renderHints["${size}"].maxStats is ${hint.maxStats}, recommended max for ${size} is ${limit}.`);
+        warnings.push(warn(`renderHints["${size}"].maxStats is ${hint.maxStats}, recommended max for ${size} is ${limit}.`));
       }
     }
 
-    // 6. If layout is "widget", widgetComponent must be set
     if (hint.layout === "widget") {
       if (!hint.widgetComponent || typeof hint.widgetComponent !== "string") {
-        errors.push(`renderHints["${size}"] has layout "widget" but missing or invalid widgetComponent.`);
+        errors.push(err(
+          `renderHints["${size}"] has layout "widget" but missing or invalid widgetComponent.`,
+          `Ergaenze: "widgetComponent": "MeinWidget"`,
+        ));
       }
     }
 
-    // 7. If layout is "compact" or "detailed", widgetComponent should NOT be set
     if (hint.layout === "compact" || hint.layout === "detailed") {
       if (hint.widgetComponent) {
-        warnings.push(`renderHints["${size}"] has layout "${hint.layout}" but sets widgetComponent. widgetComponent is only for layout "widget".`);
+        warnings.push(warn(
+          `renderHints["${size}"] has layout "${String(hint.layout)}" but sets widgetComponent. widgetComponent is only for layout "widget".`,
+        ));
       }
     }
   }
@@ -430,60 +700,43 @@ function validateRenderHints(renderHintsJson: string, supportedSizes: string[]):
 
 export function registerValidationTools(server: McpServer): void {
   server.tool(
-    "validate_plugin_structure",
-    "Validates plugin source code against all 20+ Dominion framework rules: metadata, configFields, statOptions, renderHints, exports, shared utilities. Call AFTER writing/customizing plugin code, BEFORE packaging with create_plugin_zip.",
+    "validate_plugin",
+    "[Phase 4: Validieren] Validates plugin code, manifest, and widget against 20+ framework rules. Returns errors with fix suggestions. Call BEFORE create_plugin_zip.",
     {
-      pluginCode: z.string().describe("The full TypeScript source code of the plugin to validate."),
+      pluginCode: z.string().describe("The full TypeScript source code of the plugin (index.ts)."),
+      pluginId: z.string().optional().describe("Plugin ID in kebab-case. If provided, checks manifest ID match."),
+      manifestJson: z.string().optional().describe("Full JSON content of plugin.manifest.json."),
+      widgetCode: z.string().optional().describe("Full source code of the widget .tsx file."),
+      widgetFileName: z.string().optional().describe("Widget filename, e.g. 'MyWidget.tsx'."),
     },
-    async ({ pluginCode }) => {
-      const validation = validatePluginStructure(pluginCode);
-      return {
-        content: [
-          {
-            type: "text" as const,
-            text: JSON.stringify(validation, null, 2),
-          },
-        ],
-      };
+    async (params) => {
+      const validation = validatePlugin(params);
+      return validationResponse(validation);
     },
   );
 
   server.tool(
     "validate_stats_output",
-    "Validates a PluginStats JSON object against the schema: items array (max 6), label/value types, colors, status field. Use to verify the output format of fetchStats.",
+    "[Phase 4: Validieren] Validates PluginStats JSON: items array (max 6), types, colors, status. Returns errors with fix suggestions.",
     {
       statsJson: z.string().describe("JSON string of a PluginStats object to validate."),
     },
     async ({ statsJson }) => {
       const validation = validateStatsOutput(statsJson);
-      return {
-        content: [
-          {
-            type: "text" as const,
-            text: JSON.stringify(validation, null, 2),
-          },
-        ],
-      };
+      return validationResponse(validation);
     },
   );
 
   server.tool(
     "validate_render_hints",
-    "Validates renderHints JSON: checks that each supported size has an entry, maxStats within limits, widget/compact layout rules. Use alongside validate_plugin_structure for thorough validation.",
+    "[Phase 4: Validieren] Validates renderHints JSON: size entries, maxStats limits, widget/compact layout rules. Returns errors with fix suggestions.",
     {
       renderHintsJson: z.string().describe("JSON string of the renderHints object to validate."),
       supportedSizes: z.array(z.string()).describe('Array of supported sizes, e.g. ["1x1", "2x1", "2x2"].'),
     },
     async ({ renderHintsJson, supportedSizes }) => {
       const validation = validateRenderHints(renderHintsJson, supportedSizes);
-      return {
-        content: [
-          {
-            type: "text" as const,
-            text: JSON.stringify(validation, null, 2),
-          },
-        ],
-      };
+      return validationResponse(validation);
     },
   );
 }

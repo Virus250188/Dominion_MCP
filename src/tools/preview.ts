@@ -1,5 +1,10 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
+import { success } from "./_response.js";
+
+function escapeHtml(str: string): string {
+  return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+}
 
 // ─── Preview Tools ───────────────────────────────────────────────────────
 // Generates self-contained HTML previews of plugin tiles in the Dashboard's
@@ -290,12 +295,13 @@ function generateTile1x1(
   pluginColor: string,
   stats: Array<{ label: string; value: string; unit?: string; color?: string }>,
 ): string {
-  const initial = pluginName.charAt(0).toUpperCase();
+  const safeName = escapeHtml(pluginName);
+  const initial = safeName.charAt(0).toUpperCase();
   const statsHtml = stats
     .slice(0, 3)
     .map(
       (s) =>
-        `<div class="stat"><span class="stat-value${s.color ? ` color-${s.color}` : ""}">${s.value}${s.unit ? `<span class="stat-unit">${s.unit}</span>` : ""}</span><span class="stat-label">${s.label}</span></div>`,
+        `<div class="stat"><span class="stat-value${s.color ? ` color-${escapeHtml(s.color)}` : ""}">${escapeHtml(s.value)}${s.unit ? `<span class="stat-unit">${escapeHtml(s.unit)}</span>` : ""}</span><span class="stat-label">${escapeHtml(s.label)}</span></div>`,
     )
     .join("\n          ");
 
@@ -306,7 +312,7 @@ function generateTile1x1(
     <span class="online-dot"></span>
     <div class="layout-1x1">
       <div class="icon-circle">${initial}</div>
-      <div class="tile-title">${pluginName}</div>
+      <div class="tile-title">${safeName}</div>
       <div class="stats-row">
         ${statsHtml}
       </div>
@@ -320,12 +326,13 @@ function generateTile2x1(
   description: string,
   stats: Array<{ label: string; value: string; unit?: string; color?: string }>,
 ): string {
-  const initial = pluginName.charAt(0).toUpperCase();
+  const safeName = escapeHtml(pluginName);
+  const initial = safeName.charAt(0).toUpperCase();
   const statsHtml = stats
     .slice(0, 6)
     .map(
       (s) =>
-        `<div class="stat"><span class="stat-value${s.color ? ` color-${s.color}` : ""}">${s.value}${s.unit ? `<span class="stat-unit">${s.unit}</span>` : ""}</span><span class="stat-label">${s.label}</span></div>`,
+        `<div class="stat"><span class="stat-value${s.color ? ` color-${escapeHtml(s.color)}` : ""}">${escapeHtml(s.value)}${s.unit ? `<span class="stat-unit">${escapeHtml(s.unit)}</span>` : ""}</span><span class="stat-label">${escapeHtml(s.label)}</span></div>`,
     )
     .join("\n        ");
 
@@ -337,8 +344,8 @@ function generateTile2x1(
     <div class="layout-2x1">
       <div class="icon-circle">${initial}</div>
       <div class="info">
-        <div class="tile-title">${pluginName}</div>
-        <div class="tile-desc">${description}</div>
+        <div class="tile-title">${safeName}</div>
+        <div class="tile-desc">${escapeHtml(description)}</div>
       </div>
       <div class="stats-row">
         ${statsHtml}
@@ -353,7 +360,8 @@ function generateTile2x2(
   stats: Array<{ label: string; value: string; unit?: string; color?: string }>,
   hasWidget: boolean,
 ): string {
-  const initial = pluginName.charAt(0).toUpperCase();
+  const safeName = escapeHtml(pluginName);
+  const initial = safeName.charAt(0).toUpperCase();
 
   let bodyHtml: string;
   if (hasWidget) {
@@ -363,7 +371,7 @@ function generateTile2x2(
       .slice(0, 6)
       .map(
         (s) =>
-          `<div class="stat"><span class="stat-label">${s.label}</span><span class="stat-value${s.color ? ` color-${s.color}` : ""}">${s.value}${s.unit ? `<span class="stat-unit">${s.unit}</span>` : ""}</span></div>`,
+          `<div class="stat"><span class="stat-label">${escapeHtml(s.label)}</span><span class="stat-value${s.color ? ` color-${escapeHtml(s.color)}` : ""}">${escapeHtml(s.value)}${s.unit ? `<span class="stat-unit">${escapeHtml(s.unit)}</span>` : ""}</span></div>`,
       )
       .join("\n          ");
 
@@ -377,7 +385,7 @@ function generateTile2x2(
     <div class="layout-2x2">
       <div class="widget-header">
         <div class="icon-circle">${initial}</div>
-        <span class="title">${pluginName}</span>
+        <span class="title">${safeName}</span>
         <span class="status-dot"></span>
       </div>
       <div class="widget-body">
@@ -390,7 +398,7 @@ function generateTile2x2(
 export function registerPreviewTools(server: McpServer): void {
   server.tool(
     "preview_tile",
-    "Generates a self-contained HTML preview of how tiles will look in the Dashboard (glass-dark theme). Write the HTML to a file and open in browser. Optional step AFTER implementing stats, BEFORE packaging with create_plugin_zip.",
+    "[Phase 5: Vorschau] Generates a self-contained HTML preview of tiles in glass-dark theme. Write HTML to file and open in browser.",
     {
       pluginName: z.string().describe("Display name of the plugin, e.g. 'OPNsense'"),
       pluginColor: z.string().describe("Brand color as hex, e.g. '#D94F00'"),
@@ -431,18 +439,11 @@ export function registerPreviewTools(server: McpServer): void {
       }
 
       const html = PREVIEW_TEMPLATE
-        .replace(/\{\{PLUGIN_NAME\}\}/g, pluginName)
-        .replace(/\{\{PLUGIN_COLOR\}\}/g, pluginColor)
+        .replace(/\{\{PLUGIN_NAME\}\}/g, escapeHtml(pluginName))
+        .replace(/\{\{PLUGIN_COLOR\}\}/g, escapeHtml(pluginColor))
         .replace("{{TILES_HTML}}", tiles.join("\n"));
 
-      return {
-        content: [
-          {
-            type: "text" as const,
-            text: `# Tile Preview fuer ${pluginName}\n\nSchreibe den folgenden HTML-Code in eine Datei (z.B. \`preview-${pluginName.toLowerCase().replace(/\s+/g, "-")}.html\`) und oeffne sie im Browser:\n\n\`\`\`html\n${html}\n\`\`\`\n\n**Anweisung:** Schreibe diese HTML-Datei und oeffne sie mit dem Browser. Der User sieht dann eine Vorschau aller Tile-Groessen im Dashboard-Look.`,
-          },
-        ],
-      };
+      return success(`# Tile Preview fuer ${pluginName}\n\nSchreibe den folgenden HTML-Code in eine Datei (z.B. \`preview-${pluginName.toLowerCase().replace(/\s+/g, "-")}.html\`) und oeffne sie im Browser:\n\n\`\`\`html\n${html}\n\`\`\`\n\n**Anweisung:** Schreibe diese HTML-Datei und oeffne sie mit dem Browser. Der User sieht dann eine Vorschau aller Tile-Groessen im Dashboard-Look.`);
     },
   );
 }

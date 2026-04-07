@@ -706,6 +706,63 @@ async testConnection(
 - Plugin hat feste Stats (z.B. Emby: Filme/Serien-Zaehler sind immer gleich)
 - Keine sinnvolle Entity-Auswahl moeglich
 
+## Interfaces
+
+\`\`\`typescript
+// Return-Format von crawlEntities
+interface CrawlResult {
+  groups: CrawlEntityGroup[];
+}
+
+interface CrawlEntityGroup {
+  domain: string;     // Technischer Key (z.B. "sensor", "light")
+  label: string;      // Anzeigename auf Deutsch (z.B. "Sensoren", "Lichter")
+  icon?: string;      // Lucide-Icon Name (z.B. "Activity", "Lightbulb")
+  entities: CrawlEntity[];
+}
+
+interface CrawlEntity {
+  id: string;         // Eindeutige Entity-ID (z.B. "sensor.temperatur")
+  name: string;       // Anzeigename (z.B. "Raumtemperatur")
+  state?: string;     // Aktueller Zustand (z.B. "22.5 °C", "An")
+}
+\`\`\`
+
+## selectedEntities-Format (Config)
+
+Der Entity-Picker speichert die Auswahl als \`config.selectedEntities\`:
+
+\`\`\`typescript
+// Format in der Config (JSON-Array):
+type SelectedEntity = { id: string; label: string };
+// Beispiel:
+// [{ "id": "sensor.temp", "label": "Raumtemperatur" },
+//  { "id": "light.wohnzimmer", "label": "Wohnzimmer Licht" }]
+\`\`\`
+
+- \`label\` = Custom Anzeigename, den der User pro Tile setzen kann
+- Labels sind **per-Tile**, nicht per-Connection (verschiedene Tiles koennen verschiedene Labels haben)
+- Wenn der User keinen Custom-Label setzt, wird der \`name\` aus crawlEntities verwendet
+
+## Entity-Limits pro Tile-Groesse
+
+- **1x1:** Maximal 3 Entities (STAT_LIMIT)
+- **2x1:** Maximal 6 Entities
+- **2x2:** Maximal 6 Entities
+
+Der Entity-Picker zeigt dem User diese Limits an und verhindert Ueberauswahl.
+
+## Dashboard Entity-Picker Verhalten
+
+Das Plugin hat **keinen Einfluss** auf folgendes UI-Verhalten:
+- **Gruppen:** Werden als aufklappbare Sektionen dargestellt (collapsed by default)
+- **Auto-Expand:** Domains mit bereits ausgewaehlten Entities werden beim Bearbeiten
+  automatisch aufgeklappt
+- **Checkboxen:** Jede Entity hat eine Checkbox zum An-/Abwaehlen
+- **Suchfeld:** User kann Entities nach Name filtern
+- **Custom Labels:** User kann pro Entity einen eigenen Anzeigenamen eingeben
+- **Sortierung:** Innerhalb einer Gruppe alphabetisch nach Name
+
 ## Komplettes Beispiel (generisches Pattern fuer Entity-basierte Services)
 
 \`\`\`typescript
@@ -808,6 +865,21 @@ if (entityEntries.length === 0 && config.entityIds) {
 }
 \`\`\`
 
+## WICHTIG: Keine Entity-Textarea wenn crawlEntities existiert
+
+Wenn ein Plugin \`crawlEntities\` implementiert, darf es **KEIN** Textarea-ConfigField
+fuer Entity-IDs haben (z.B. \`entityIds\`). Der Entity-Picker des Dashboards
+erscheint automatisch nach dem Verbindungstest und uebernimmt die Entity-Auswahl.
+
+Ein Textarea-Feld wuerde **NEBEN** dem Entity-Picker angezeigt und verwirrt den User.
+
+\`configFields\` sollten NUR Connection-Felder enthalten:
+- \`apiUrl\` (url, required)
+- \`apiKey\` / \`accessToken\` (password, required)
+
+Die Entity-Auswahl wird automatisch als \`config.selectedEntities\` gespeichert.
+Das Dual-Format-Parsing im fetchStats (siehe oben) bleibt als Legacy-Fallback.
+
 ## Regeln
 
 1. **AbortSignal.timeout(10000)** - 10s Timeout (mehr Daten als normaler Fetch)
@@ -815,6 +887,7 @@ if (entityEntries.length === 0 && config.entityIds) {
 3. **Lucide-Icons fuer Gruppen** - Passende Icons pro Domain waehlen
 4. **crawlEntities darf Exceptions werfen** - (anders als fetchStats!) System fängt ab
 5. **Entity-Namen alphabetisch sortieren** innerhalb jeder Gruppe
+6. **Keine Entity-Textarea in configFields** - Entity-Picker uebernimmt (siehe oben)
 `,
 
   widgetPattern: `
@@ -1655,6 +1728,14 @@ const processedItems = stats.items.map(item => ({  // Laeuft bei jedem Render!
 - [ ] Loading-State wird kurz sichtbar beim Laden
 - [ ] Error-State wird bei falscher Config angezeigt
 - [ ] visibleStats Toggle funktioniert (Stats erscheinen/verschwinden)
+
+## 8. Version-Bump (Pflicht bei jeder ZIP-Erstellung)
+
+- [ ] Version im Manifest hochgezaehlt (semver):
+  - Bug-Fix: patch (1.0.0 -> 1.0.1)
+  - Neue Features/Stats: minor (1.0.0 -> 1.1.0)
+  - Breaking Changes: major (1.0.0 -> 2.0.0)
+- [ ] NIEMALS eine ZIP mit der gleichen Version wie zuvor erstellen
 `,
 
   helloWorldExample: `
@@ -2132,5 +2213,101 @@ Der Ablauf ist:
 
 Der Plugin-Entwickler muss NUR \`crawlEntities()\` implementieren.
 Das Dashboard uebernimmt den gesamten UI-Flow automatisch.
+`,
+
+  readmeTemplate: `
+# README-Vorlage fuer App-Einreichung
+
+Jedes Plugin muss neben der ZIP-Datei eine README.md liefern.
+Die README folgt einem festen Format (Beispiel: Emby).
+Das Tool \`generate_readme\` erzeugt diese automatisch.
+
+## Pflicht-Sektionen
+
+1. **Titel + Meta-Zeile:** Name, Category, Sizes, Auth-Typ
+2. **Installations-Hinweis:** Community-Plugin → Download-Link / ZIP-Upload
+3. **Beschreibung:** 1-2 Saetze was die App kann
+4. **Requirements:** Voraussetzungen (Server-Version, API-Key, etc.)
+5. **Features:** 4-7 Bullet-Points der wichtigsten Funktionen
+6. **Tile Sizes:** Tabelle mit Size | Layout | What you see | Widget
+7. **Configuration:** Tabelle mit Field | Type | Required | Default | Description
+8. **Statistics:** Tabelle mit Stat | Description | Default (On/Off)
+9. **Screenshots:** Platzhalter oder echte Screenshots
+10. **Troubleshooting:** 2-3 haeufige Probleme mit Loesungsschritten
+
+## Beispiel-Struktur
+
+\`\`\`markdown
+# {Plugin Name}
+
+**Category:** {category} | **Sizes:** {sizes} | **Auth:** {auth_type}
+
+> Community Plugin -- Install via ZIP upload in Settings > Plugins.
+
+{Kurze Beschreibung was die App tut und welchen Service sie anbindet.}
+
+---
+
+## Requirements
+
+- **{Service Name}** {version} or newer
+- **{Auth}** -- {wie man den Key/Token erstellt}
+- **Server URL** -- {was der User eingeben muss}
+
+---
+
+## Features
+
+- {Feature 1}
+- {Feature 2}
+- ...
+
+---
+
+## Tile Sizes
+
+| Size | Layout | What you see | Widget |
+|------|--------|-------------|--------|
+| **1x1** | Compact | {stats} | No |
+| **2x1** | {layout} | {stats + widget?} | {Yes/No} |
+| **2x2** | {layout} | {stats + widget?} | {Yes/No} |
+
+---
+
+## Configuration
+
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| Server URL | URL | Yes | -- | {description} |
+| {Auth Field} | Password | Yes | -- | {description} |
+| ... | ... | ... | ... | ... |
+
+---
+
+## Statistics
+
+| Stat | Description | Default |
+|------|-------------|---------|
+| {stat_label} | {stat_description} | {On/Off} |
+| ... | ... | ... |
+
+---
+
+## Screenshots
+
+<!-- Screenshots coming soon -->
+
+---
+
+## Troubleshooting
+
+**"{Typisches Problem 1}"**
+- {Diagnose-Schritt}
+- {Loesung}
+
+**"{Typisches Problem 2}"**
+- {Diagnose-Schritt}
+- {Loesung}
+\`\`\`
 `,
 } as const;

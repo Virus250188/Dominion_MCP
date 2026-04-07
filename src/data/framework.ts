@@ -436,6 +436,16 @@ Der Entwickler bestimmt nur, welche Daten und Visualisierungen darin erscheinen.
 - Labels und Beschreibungen auf Deutsch
 - \`apiUrl\` ist fast immer das erste Pflichtfeld (type: "url", required: true)
 
+**WICHTIG — Sichtbarkeit im TileDialog:**
+Das Dashboard teilt configFields automatisch in zwei Gruppen:
+- **Connection-Fields** (sofort sichtbar): Felder mit Connection-Keys (\`apiUrl\`, \`apiKey\`,
+  \`accessToken\`, \`username\`, \`password\`) ODER \`required: true\` ODER \`type: "oauth"\`
+- **Feature-Fields** (erst nach Verbindungstest sichtbar): Alle anderen Felder
+
+Wenn das Plugin \`crawlEntities\` implementiert: KEINE entity-bezogenen Felder
+(z.B. \`entityIds\` Textarea) in configFields aufnehmen. Der Entity-Picker erscheint
+automatisch nach dem Verbindungstest und uebernimmt die Entity-Auswahl.
+
 ### 3. Statistik-Optionen (\`statOptions: StatOption[]\`)
 - Welche Stats der Benutzer aktivieren/deaktivieren kann
 - Jede Option hat: key, label, description, defaultEnabled
@@ -446,6 +456,17 @@ Der Entwickler bestimmt nur, welche Daten und Visualisierungen darin erscheinen.
 - Array von: \`"1x1"\`, \`"2x1"\`, \`"2x2"\`
 - Mindestens \`["1x1"]\` ist Pflicht
 - Bestimmt welche Groessen der Benutzer im TileDialog waehlen kann
+
+**WICHTIG — Mehrere Tiles pro App:**
+Ein User kann von derselben App MEHRERE Tiles gleichzeitig auf dem Dashboard anlegen.
+Jede Tile kann eine ANDERE Groesse haben und EIGENE Anzeige-Einstellungen (z.B.
+andere Stats sichtbar, andere Entities ausgewaehlt). Alle Tiles teilen dieselbe
+Verbindung (apiUrl, apiKey), aber jede Tile hat ihre eigene Config (visibleStats,
+selectedEntities, etc.). Das bedeutet:
+- Ein User kann gleichzeitig eine 1x1-Tile (Kompakt-Ueberblick) UND eine 2x2-Tile
+  (detailliertes Widget) von derselben App auf dem Dashboard haben
+- Jede Tile pollt unabhaengig (alle 30s fetchStats mit eigener Config)
+- Das Plugin muss ALLE supportedSizes sauber handlen, weil sie parallel genutzt werden
 
 ### 5. Render-Hints (\`renderHints: Partial<Record<TileSize, SizeRenderHint>>\`)
 - Pro unterstuetzte Groesse ein Eintrag:
@@ -488,6 +509,15 @@ Der Entwickler bestimmt nur, welche Daten und Visualisierungen darin erscheinen.
 - Nur fuer Services mit vielen waehlbaren Entities (z.B. Smart-Home-Systeme)
 - Gibt gruppierte Entity-Liste zurueck fuer den Entity-Picker im TileDialog
 - Jede Gruppe: \`{ domain, label, icon, entities: [{ id, name, state }] }\`
+
+**Dashboard-Verhalten (Entity-Picker):**
+- Nach erfolgreichem Verbindungstest ruft das Dashboard automatisch \`crawlEntities()\` auf
+- Die Ergebnisse werden als Entity-Picker mit Gruppen, Checkboxen und Suchfeld angezeigt
+- Auswahl wird als \`config.selectedEntities\` (JSON-Array) in der Config gespeichert
+- Das Plugin hat KEINEN Einfluss auf: Expand-/Collapse-Verhalten der Gruppen,
+  Custom-Label-Eingabe im Picker, Sortierung der ausgewaehlten Entities
+- configFields sollten KEINE entity-bezogenen Felder enthalten (z.B. entityIds Textarea)
+  — der Entity-Picker uebernimmt diese Aufgabe vollstaendig
 
 ### 10. Optional: Widget-Komponente
 - React-Komponente im Plugin-Ordner: \`src/plugins/community/{id}/{Name}Widget.tsx\`
@@ -720,20 +750,29 @@ Falls Widget gewuenscht: Rufe \`scaffold_widget\` auf.
 
 ## Schritt 8: Validieren
 Rufe auf:
-- \`validate_plugin_structure\` → Prueft alle 20+ Regeln
-- \`test_plugin_completeness\` → Prueft Vollstaendigkeit aller Dateien
-- \`test_plugin_export\` → Prueft Export-Shape
-- \`test_typescript_syntax\` → Prueft Klammern, Imports
+- \`validate_plugin\` → Prueft alle 20+ Regeln (Code, Manifest, Widget) mit Fix-Vorschlaegen
+- \`test_typescript_syntax\` → Prueft Klammern, Imports, console.log
 
-## Schritt 9: Preview (optional)
-Rufe \`preview_tile\` auf fuer eine visuelle HTML-Vorschau der Tiles.
+## Schritt 9: Preview (empfohlen)
+Nutze \`preview_tile\` um eine Vorschau deiner Tile in allen unterstuetzten Groessen
+zu sehen, bevor du die ZIP erstellst. Das Tool generiert eine HTML-Datei im
+Dashboard-Look (glass-dark Theme) mit Mock-Stats. So siehst du ob Layout,
+Farben und Stat-Anzahl passen.
 
-## Schritt 10: ZIP erstellen und ausliefern
+## Schritt 10: README generieren
+Rufe \`generate_readme\` auf mit den Plugin-Daten (Name, Category, Features, Config, Stats, etc.).
+→ Erzeugt eine README.md im Dominion docs/apps Format
+→ README als Datei speichern
+
+## Schritt 11: ZIP erstellen und ausliefern
 Rufe \`create_plugin_zip\` auf mit:
 - pluginId, manifestJson, pluginCode
 - Optional: widgetCode, widgetFileName, typesCode
 → ZIP wird auf die Festplatte geschrieben
-→ Teile dem User den Dateipfad mit
+
+**Dem User uebergeben:**
+1. Die **ZIP-Datei** (Plugin-Code)
+2. Die **README.md** (App-Dokumentation fuer die Einreichung)
 
 Der User installiert das Plugin:
 - **Via UI:** Dashboard > Einstellungen > Plugins > Upload

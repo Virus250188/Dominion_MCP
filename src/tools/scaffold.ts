@@ -1,5 +1,6 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
+import { success, error } from "./_response.js";
 
 // ─── Scaffold Tools ───────────────────────────────────────────────────────
 // Code generation tools that produce ready-to-use plugin files, widget
@@ -13,6 +14,11 @@ function toPascalCase(str: string): string {
       c ? c.toUpperCase() : "",
     )
     .replace(/^(.)/, (_, c: string) => c.toUpperCase());
+}
+
+/** Escape strings before embedding in template literals to prevent code injection */
+function sanitize(str: string): string {
+  return str.replace(/\\/g, "\\\\").replace(/`/g, "\\`").replace(/\$\{/g, "\\${");
 }
 
 interface ConfigFieldInput {
@@ -70,13 +76,13 @@ function generateConfigFields(fields: ConfigFieldInput[]): string {
     .map((f) => {
       const lines = [
         `    {`,
-        `      key: "${f.key}",`,
-        `      label: "${f.label}",`,
-        `      type: "${f.type}",`,
+        `      key: "${sanitize(f.key)}",`,
+        `      label: "${sanitize(f.label)}",`,
+        `      type: "${sanitize(f.type)}",`,
       ];
       if (f.required) lines.push(`      required: true,`);
-      if (f.placeholder) lines.push(`      placeholder: "${f.placeholder}",`);
-      if (f.description) lines.push(`      description: "${f.description}",`);
+      if (f.placeholder) lines.push(`      placeholder: "${sanitize(f.placeholder)}",`);
+      if (f.description) lines.push(`      description: "${sanitize(f.description)}",`);
       lines.push(`    }`);
       return lines.join("\n");
     })
@@ -87,7 +93,7 @@ function generateStatOptions(options: StatOptionInput[]): string {
   return options
     .map(
       (o) =>
-        `    {\n      key: "${o.key}",\n      label: "${o.label}",\n      description: "${o.description}",\n      defaultEnabled: ${o.defaultEnabled},\n    }`,
+        `    {\n      key: "${sanitize(o.key)}",\n      label: "${sanitize(o.label)}",\n      description: "${sanitize(o.description)}",\n      defaultEnabled: ${o.defaultEnabled},\n    }`,
     )
     .join(",\n");
 }
@@ -222,8 +228,14 @@ function generatePluginCode(params: {
   const oauthSection = hasOAuth
     ? `
 
+  // OAuth Token URL: Ersetze mit dem Token-Endpoint des Anbieters.
+  // Beispiele:
+  //   Spotify: "https://accounts.spotify.com/api/token"
+  //   GitHub:  "https://github.com/login/oauth/access_token"
+  //   Google:  "https://oauth2.googleapis.com/token"
   async exchangeToken(code: string, redirectUri: string, config: PluginConfig) {
-    const res = await fetch("TODO_TOKEN_URL", {
+    const tokenUrl = "TODO_TOKEN_URL"; // <-- Hier die Token-URL des Anbieters einsetzen
+    const res = await fetch(tokenUrl, {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: new URLSearchParams({
@@ -244,7 +256,8 @@ function generatePluginCode(params: {
   },
 
   async refreshToken(config: PluginConfig) {
-    const res = await fetch("TODO_TOKEN_URL", {
+    const tokenUrl = "TODO_TOKEN_URL"; // <-- Gleiche Token-URL wie oben
+    const res = await fetch(tokenUrl, {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: new URLSearchParams({
@@ -277,12 +290,12 @@ import { getVisibleStats, normalizeUrl, createErrorResponse, createFetchOptions 
 ${widgetImportLine}
 export const plugin: AppPlugin = {
   metadata: {
-    id: "${id}",
-    name: "${name}",
+    id: "${sanitize(id)}",
+    name: "${sanitize(name)}",
     icon: "${toPascalCase(name.replace(/\s+/g, ""))}",
     color: "#000000", // TODO: Markenfarbe von simpleicons.org
-    description: "${description}",
-    category: "${category}",
+    description: "${sanitize(description)}",
+    category: "${sanitize(category)}",
     website: "https://example.com", // TODO: Offizielle Website
   },
 
@@ -620,7 +633,7 @@ export function registerScaffoldTools(server: McpServer): void {
   // ── scaffold_plugin ───────────────────────────────────────────────────
   server.tool(
     "scaffold_plugin",
-    "Generates a complete plugin file (index.ts + manifest) for a new Enhanced App. Call AFTER understanding the framework (get_framework_overview) and contracts (get_data_contracts). The generated code has TODO markers — customize before packaging with create_plugin_zip.",
+    "[Phase 3: Generieren] Generates a complete plugin (index.ts + manifest). Call AFTER get_framework_overview + get_data_contracts. Code has TODO markers to customize.",
     {
       id: z.string().describe("Plugin ID in kebab-case, e.g. 'my-plugin'"),
       name: z.string().describe("Display name, e.g. 'My Plugin'"),
@@ -686,6 +699,22 @@ export function registerScaffoldTools(server: McpServer): void {
         ),
     },
     async (params) => {
+      // Input validation
+      if (!/^[a-z][a-z0-9-]*$/.test(params.id)) {
+        return error(`Plugin-ID "${params.id}" ist kein gueltiges kebab-case. Erlaubt: Kleinbuchstaben, Ziffern, Bindestriche (z.B. "mein-plugin").`);
+      }
+      if (params.statOptions.length === 0) {
+        return error("statOptions darf nicht leer sein. Mindestens eine Statistik mit defaultEnabled: true ist Pflicht.");
+      }
+      if (!params.statOptions.some((o) => o.defaultEnabled)) {
+        return error("Mindestens eine statOption muss defaultEnabled: true haben.");
+      }
+      const configKeys = params.configFields.map((f) => f.key);
+      const duplicateKeys = configKeys.filter((k, i) => configKeys.indexOf(k) !== i);
+      if (duplicateKeys.length > 0) {
+        return error(`Doppelte configField keys: ${[...new Set(duplicateKeys)].join(", ")}. Jeder key muss eindeutig sein.`);
+      }
+
       const code = generatePluginCode(params);
       const pascalName = toPascalCase(params.name.replace(/\s+/g, ""));
       const manifest = generateManifest({
@@ -697,21 +726,16 @@ export function registerScaffoldTools(server: McpServer): void {
         widgetName: params.hasWidget ? `${pascalName}Widget` : undefined,
       });
 
-      return {
-        content: [
-          {
-            type: "text" as const,
-            text: `# Generierte Plugin-Dateien fuer: ${params.name}\n\n## 1. plugin.manifest.json\n\n\`\`\`json\n${manifest}\n\`\`\`\n\n## 2. index.ts\n\n\`\`\`typescript\n${code}\`\`\`\n\n**Naechste Schritte:**\n1. TODO-Kommentare abarbeiten (API-Endpoints, Auth-Header, Markenfarbe, Author)\n2. Code mit \`validate_plugin_structure\` pruefen\n3. Mit \`create_plugin_zip\` als ZIP verpacken und dem User uebergeben`,
-          },
-        ],
-      };
+      return success(
+        `# Generierte Plugin-Dateien fuer: ${params.name}\n\n## 1. plugin.manifest.json\n\n\`\`\`json\n${manifest}\n\`\`\`\n\n## 2. index.ts\n\n\`\`\`typescript\n${code}\`\`\`\n\n**Naechste Schritte:**\n1. TODO-Kommentare abarbeiten (API-Endpoints, Auth-Header, Markenfarbe, Author)\n2. Code mit \`validate_plugin\` pruefen\n3. Bei jeder neuen ZIP: Version im Manifest hochzaehlen (semver: patch/minor/major)\n4. Mit \`create_plugin_zip\` als ZIP verpacken und dem User uebergeben`,
+      );
     },
   );
 
   // ── scaffold_widget ───────────────────────────────────────────────────
   server.tool(
     "scaffold_widget",
-    "Generates a widget component (.tsx) with size-specific sub-components, state handling, and WidgetHeader. Call AFTER scaffold_plugin and get_widget_contract. The generated widget has TODO markers — customize, then package with create_plugin_zip.",
+    "[Phase 3: Generieren] Generates a widget component (.tsx) with size-specific sub-components and WidgetHeader. Call AFTER scaffold_plugin.",
     {
       pluginId: z.string().describe("Plugin ID in kebab-case"),
       pluginName: z.string().describe("Plugin display name"),
@@ -727,15 +751,7 @@ export function registerScaffoldTools(server: McpServer): void {
     async ({ pluginId, pluginName, color, sizes }) => {
       const validSizes = sizes.filter((s) => s === "2x1" || s === "2x2");
       if (validSizes.length === 0) {
-        return {
-          content: [
-            {
-              type: "text" as const,
-              text: 'Fehler: Mindestens eine Widget-Groesse (2x1 oder 2x2) muss angegeben werden.',
-            },
-          ],
-          isError: true,
-        };
+        return error("Mindestens eine Widget-Groesse (2x1 oder 2x2) muss angegeben werden.");
       }
 
       const pascalName = toPascalCase(pluginName.replace(/\s+/g, ""));
@@ -747,21 +763,16 @@ export function registerScaffoldTools(server: McpServer): void {
         sizes: validSizes,
       });
 
-      return {
-        content: [
-          {
-            type: "text" as const,
-            text: `# Generierte Widget-Datei: ${pluginId}/${widgetName}.tsx\n\n\`\`\`tsx\n${code}\`\`\`\n\n**Naechste Schritte:**\n1. TODO: Lucide-Icon im WidgetHeader anpassen (statt "Activity")\n2. In der Plugin \`index.ts\`: \`export const widget = ${widgetName};\` und \`export const widgetName = "${widgetName}";\`\n3. Sicherstellen dass \`renderHints.widgetComponent\` im Plugin auf "${widgetName}" gesetzt ist\n4. Mit \`create_plugin_zip\` als ZIP verpacken (widgetCode + widgetFileName mitgeben)`,
-          },
-        ],
-      };
+      return success(
+        `# Generierte Widget-Datei: ${pluginId}/${widgetName}.tsx\n\n\`\`\`tsx\n${code}\`\`\`\n\n**Naechste Schritte:**\n1. TODO: Lucide-Icon im WidgetHeader anpassen (statt "Activity")\n2. In der Plugin \`index.ts\`: \`export const widget = ${widgetName};\` und \`export const widgetName = "${widgetName}";\`\n3. Sicherstellen dass \`renderHints.widgetComponent\` im Plugin auf "${widgetName}" gesetzt ist\n4. Mit \`create_plugin_zip\` als ZIP verpacken (widgetCode + widgetFileName mitgeben)`,
+      );
     },
   );
 
   // ── get_registration_steps ────────────────────────────────────────────
   server.tool(
     "get_registration_steps",
-    "Returns the steps to deliver and install a plugin: create files, package as ZIP with create_plugin_zip, and hand to user for upload via Dashboard UI. Call AFTER all code is written and validated.",
+    "[Phase 6: Paketieren] Returns delivery and installation steps: ZIP packaging with create_plugin_zip and upload via Dashboard UI.",
     {
       pluginId: z.string().describe("Plugin ID in kebab-case"),
       pluginName: z.string().describe("Plugin display name"),
@@ -776,9 +787,141 @@ export function registerScaffoldTools(server: McpServer): void {
         hasWidget,
       });
 
-      return {
-        content: [{ type: "text" as const, text: steps }],
-      };
+      return success(steps);
+    },
+  );
+
+  // ── generate_readme ──────────────────────────────────────────────────
+  server.tool(
+    "generate_readme",
+    "[Phase 6: Paketieren] Generates a README.md for app submission. The README follows the Dominion docs/apps format (like Emby). Deliver alongside the ZIP.",
+    {
+      pluginName: z.string().describe("Display name, e.g. 'Home Assistant'"),
+      pluginId: z.string().describe("Plugin ID in kebab-case, e.g. 'home-assistant'"),
+      category: z.string().describe("Category: Storage, Media, Network, Automation, System, Monitoring, Downloads, Security, Productivity, Development, Custom"),
+      supportedSizes: z.array(z.string()).describe('e.g. ["1x1", "2x1"]'),
+      authType: z.string().describe("Authentication type shown in header, e.g. 'API Key', 'OAuth', 'Token', 'Username/Password'"),
+      description: z.string().describe("1-2 sentence description of what the app does (German)"),
+      requirements: z.array(z.string()).describe("List of prerequisites, e.g. ['Home Assistant 2024.1+', 'Long-Lived Access Token']"),
+      features: z.array(z.string()).describe("List of 4-7 key features as bullet points"),
+      configFields: z.array(z.object({
+        label: z.string().describe("Field label"),
+        type: z.string().describe("Field type: URL, Password, Text, Select, Number, Textarea"),
+        required: z.boolean(),
+        defaultValue: z.string().optional().describe("Default value or '--' if none"),
+        description: z.string().describe("Short description"),
+      })).describe("Configuration fields for the table"),
+      statOptions: z.array(z.object({
+        label: z.string().describe("Stat display name"),
+        description: z.string().describe("What this stat shows"),
+        defaultEnabled: z.boolean(),
+      })).describe("Statistics toggle options"),
+      hasWidget: z.boolean().describe("Whether plugin has a widget component"),
+      hasCrawler: z.boolean().describe("Whether plugin has crawlEntities"),
+      troubleshooting: z.array(z.object({
+        problem: z.string().describe("Problem title, e.g. 'Connection failed'"),
+        steps: z.array(z.string()).describe("Diagnostic/solution steps"),
+      })).optional().describe("Common issues with solutions"),
+    },
+    async (params) => {
+      const {
+        pluginName, pluginId, category, supportedSizes, authType,
+        description, requirements, features, configFields, statOptions,
+        hasWidget, hasCrawler, troubleshooting,
+      } = params;
+
+      // Build tile sizes table
+      const sizeRows = supportedSizes.map((size) => {
+        const isCompact = size === "1x1";
+        const maxStats = isCompact ? 3 : 6;
+        const layout = isCompact ? "Compact" : (hasWidget ? "Widget" : "Detailed");
+        const widget = isCompact ? "No" : (hasWidget ? "Yes" : "No");
+        const content = hasCrawler
+          ? `Up to ${maxStats} entities`
+          : `Up to ${maxStats} stats${hasWidget && !isCompact ? " + widget" : ""}`;
+        return `| **${size}** | ${layout} | ${content} | ${widget} |`;
+      }).join("\n");
+
+      // Build config table
+      const configRows = configFields.map((f) =>
+        `| ${sanitize(f.label)} | ${f.type} | ${f.required ? "Yes" : "No"} | ${f.defaultValue || "--"} | ${sanitize(f.description)} |`
+      ).join("\n");
+
+      // Build stats table
+      const statRows = statOptions.map((s) =>
+        `| ${sanitize(s.label)} | ${sanitize(s.description)} | ${s.defaultEnabled ? "On" : "Off"} |`
+      ).join("\n");
+
+      // Build troubleshooting
+      let troubleshootingSection = "";
+      if (troubleshooting && troubleshooting.length > 0) {
+        troubleshootingSection = troubleshooting.map((t) =>
+          `**"${sanitize(t.problem)}"**\n${t.steps.map((s) => `- ${sanitize(s)}`).join("\n")}`
+        ).join("\n\n");
+      } else {
+        troubleshootingSection = `**"Connection failed"**\n- Verify the Server URL is reachable from the machine running Dominion\n- Check that the API Key/Token is correct\n- Use the **Test Connection** button in Settings to get a detailed error message`;
+      }
+
+      const readme = `# ${sanitize(pluginName)}
+
+**Category:** ${sanitize(category)} | **Sizes:** ${supportedSizes.join(", ")} | **Auth:** ${sanitize(authType)}
+
+> Community Plugin -- Install via ZIP upload in Settings > Plugins.
+
+${sanitize(description)}
+
+---
+
+## Requirements
+
+${requirements.map((r) => `- **${sanitize(r)}**`).join("\n")}
+
+---
+
+## Features
+
+${features.map((f) => `- ${sanitize(f)}`).join("\n")}
+
+---
+
+## Tile Sizes
+
+| Size | Layout | What you see | Widget |
+|------|--------|-------------|--------|
+${sizeRows}
+
+---
+
+## Configuration
+
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+${configRows}
+
+---
+
+## Statistics
+
+| Stat | Description | Default |
+|------|-------------|---------|
+${statRows}
+
+---
+
+## Screenshots
+
+<!-- Screenshots coming soon -->
+
+---
+
+## Troubleshooting
+
+${troubleshootingSection}
+`;
+
+      return success(
+        `# README fuer ${pluginName}\n\nSpeichere als \`README.md\` und liefere sie zusammen mit der ZIP-Datei.\n\n\`\`\`markdown\n${readme}\`\`\`\n\n**Naechste Schritte:**\n1. README.md speichern\n2. \`create_plugin_zip\` aufrufen fuer die ZIP-Datei\n3. Beides dem User uebergeben: ZIP + README.md`,
+      );
     },
   );
 }

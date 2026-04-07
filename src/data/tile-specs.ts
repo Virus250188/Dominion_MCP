@@ -368,6 +368,13 @@ Verwende 2x2 wenn:
   - NAS-Service: Pool-Liste + Kreisdiagramm + Uptime-Visualisierung
   - Firewall: Interface-Stats + Traffic-Graph + Threat Map
 
+## Mehrere Tiles gleichzeitig
+
+Ein User kann von derselben App MEHRERE Tiles auf dem Dashboard anlegen —
+z.B. eine 1x1-Tile fuer den Schnell-Ueberblick UND eine 2x2-Tile fuer das
+detaillierte Widget. Jede Tile hat eigene Anzeige-Einstellungen.
+**Deshalb: Alle supportedSizes muessen sauber funktionieren, sie werden parallel genutzt.**
+
 ## Goldene Regel
 
 > **Starte immer mit 1x1.** Fuege groessere Groessen nur hinzu, wenn es
