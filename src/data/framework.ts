@@ -562,6 +562,76 @@ Der Entwickler bestimmt nur, welche Daten und Visualisierungen darin erscheinen.
 - **Stat-Auswahl:** Toggle-UI fuer jede statOption mit Persistierung in Config
 `,
 
+  appDesignGuidance: `
+# App-Design: Was macht eine gute Enhanced App aus?
+
+## Enhanced App != Hyperlink
+
+Eine Enhanced App ist NICHT einfach ein Link zu einem Web-Interface.
+Jede Enhanced App MUSS:
+- **Echte Daten abrufen** via \`fetchStats()\` — mindestens 1-3 Kennzahlen
+- **Live-Status anzeigen** — der User sieht auf einen Blick ob alles OK ist
+- **Mindestens 1x1 unterstuetzen** — die kleinste Tile-Groesse mit Stats
+
+**Anti-Pattern: "Link-Only Plugin"**
+\`\`\`
+FALSCH: Ein Plugin das nur eine URL oeffnet ohne Stats
+  fetchStats() { return { items: [], status: "ok" } }  // Leer!
+  → Das ist nur ein Hyperlink mit extra Schritten
+
+RICHTIG: Ein Plugin das echte Daten liefert
+  fetchStats() {
+    const data = await fetch(apiUrl + "/status");
+    return { items: [
+      { label: "Status", value: "Online", color: "green" },
+      { label: "CPU", value: "45%", color: "yellow" },
+    ], status: "ok" }
+  }
+\`\`\`
+
+## Ist der Service geeignet?
+
+Bevor du anfaengst zu coden, pruefe:
+
+| Frage | Ja → Geeignet | Nein → Nicht geeignet |
+|-------|---------------|----------------------|
+| Hat der Service eine API? | REST, GraphQL, WebSocket | Nur Web-UI ohne API |
+| Liefert die API Daten die auf einem Dashboard sinnvoll sind? | CPU, RAM, Streams, Status, Counts | Nur Konfigurations-Endpunkte |
+| Kann man sich programmatisch authentifizieren? | API Key, Token, OAuth | Nur Browser-Login mit CAPTCHA |
+
+Falls der Service KEINE API hat → kein Enhanced App Plugin moeglich.
+Erstelle stattdessen eine Standard-Tile (einfacher Hyperlink).
+
+## Tile-Groessen = Rollen, nicht nur Dimensionen
+
+\`\`\`
+1x1 = STATUSANZEIGE
+      Auf einen Blick: Ist alles OK? 2-3 Kennzahlen.
+      "Online ✓ | CPU 45% | RAM 72%"
+      KEIN Widget, KEIN Chart, KEINE Interaktion.
+      → Jede Enhanced App MUSS mindestens das koennen.
+
+2x1 = DETAIL ODER MINI-WIDGET
+      Option A (layout: "detailed"): 4-6 Stats mit mehr Kontext.
+      Option B (layout: "widget"): Mini-Widget — kompakte Liste,
+      Mini-Sparkline, 2-3 Cover-Thumbnails, kleine Fortschrittsbalken.
+      → Das Mini-Widget ist REDUZIERT — 2x2 soll herausstechen.
+
+2x2 = VISUELLES PREMIUM-WIDGET
+      Die "Highlight-Ansicht" der App. Visuell ansprechend,
+      modern, funktional. Cover-Karussell, System-Dashboard mit
+      Gauges, Entity-Grid mit Toggle-Controls, Traffic-Charts.
+      → MUSS mit einem Blick eine spezifische Information vermitteln.
+      → Soll sich ABHEBEN von den kleinen Tiles.
+\`\`\`
+
+## Proaktives Design: Agent macht Vorschlaege
+
+Wenn der User nicht genau sagt was er will, soll der Agent basierend
+auf dem Service-Typ Vorschlaege machen. Rufe \`get_app_design_guide\`
+auf fuer ein Service-Typ → Widget-Design Mapping.
+`,
+
   agentWorkflow: `
 # Agent-Workflow: Plugin entwickeln in 10 Schritten
 
@@ -577,14 +647,48 @@ Rufe \`get_framework_overview\` auf.
 ## Schritt 2: Workflow kennen
 Du bist hier. Dieser Workflow gibt dir die Reihenfolge der Tool-Aufrufe.
 
-## Schritt 3: Anforderungen klaeren
-Klaere mit dem User:
-- Welchen Service soll das Plugin anbinden? (z.B. Proxmox, AdGuard, Plex)
-- Welche Daten sollen angezeigt werden? (z.B. CPU, RAM, Streams)
-- Braucht es ein Widget? (Karussell, Chart, Controls?)
-- Welche Tile-Groessen? (1x1 immer, 2x1 fuer Details, 2x2 fuer Widget)
-- Braucht es OAuth oder reicht API-Key?
-- Braucht es einen Entity-Crawler? (viele waehlbare Geraete/Container)
+## Schritt 3: Anforderungen klaeren (4-Phasen-Checkliste)
+
+**WICHTIG: Erst wenn alle 4 Phasen abgeschlossen sind, darf gecoded werden!**
+
+### Phase A: Service-Verstaendnis (frage DICH SELBST)
+a) Um welches Programm/Service geht es hier?
+b) Kenne ich dieses Programm? Was macht es, welche Daten liefert es?
+c) Hat es eine dokumentierte API? (REST, GraphQL, WebSocket?)
+d) Gibt es Test-Endpunkte oder oeffentliche API-Dokumentation
+   die ich lesen kann um echte Response-Strukturen zu sehen?
+e) Welche Auth-Methode braucht die API? (API Key, Basic Auth, OAuth?)
+
+### Phase B: Wissensluecken schliessen (frage den USER)
+f) Falls du die API nicht kennst: "Kannst du mir die API-Doku geben
+   oder einen Link dazu? Ohne die API-Struktur zu kennen kann ich
+   keine saubere fetchStats-Implementierung schreiben."
+g) Falls du die Auth nicht kennst: "Wie authentifiziert man sich
+   bei diesem Service? API Key, Username/Password, oder OAuth?"
+h) Falls Test-Daten noetig: "Hast du eine laufende Instanz wo ich
+   die API testen kann? Oder gibt es eine Demo-API?"
+
+### Phase C: Design-Entscheidungen (frage den USER, mache VORSCHLAEGE)
+i) Was soll auf einen Blick sichtbar sein? (= 1x1 Stats)
+j) Braucht es ein Widget? Falls ja: Was soll es zeigen?
+   → Mache PROAKTIV Vorschlaege basierend auf dem Service-Typ!
+   Rufe \`get_app_design_guide\` auf fuer Service-Typ → Widget-Mapping.
+   z.B. "Proxmox hat VMs — ich wuerde ein VM-Grid mit CPU/RAM Gauges
+   fuer 2x2 vorschlagen und eine kompakte VM-Liste fuer 2x1."
+k) Hat der Service waehlbare Entities? (Geraete, Container, VMs?)
+   → Falls ja: crawlEntities implementieren
+l) Gibt es interaktive Aktionen? (Play/Pause, Toggle, Restart?)
+   → Falls ja: Widget-Actions Pattern verwenden
+
+### Phase D: Selbst-Pruefung (frage DICH SELBST)
+m) Habe ich WIRKLICH alles was ich brauche?
+n) Kenne ich die API-Response-Struktur genau genug um
+   fetchStats korrekt zu implementieren?
+o) Gibt es noch offene Rueckfragen an den User?
+   → Falls ja: JETZT fragen, NICHT spaeter beim Implementieren!
+
+**Goldene Regel:** Lieber einmal zu viel fragen als eine App zu bauen
+die nicht funktioniert.
 
 ## Schritt 4: Specs lesen
 Rufe auf (je nach Bedarf):

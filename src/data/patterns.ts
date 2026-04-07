@@ -1910,4 +1910,227 @@ try {
 }
 \`\`\`
 `,
+
+  widgetDesignByServiceType: `
+# Widget-Design nach Service-Typ
+
+Wenn der User keine genaue Vision hat, mache PROAKTIV Vorschlaege basierend
+auf dem Service-Typ. Nutze diese Tabelle als Orientierung.
+
+## Media Services (Emby, Plex, Jellyfin, Spotify, Navidrome)
+
+| Groesse | Design | Inhalt |
+|---------|--------|--------|
+| 1x1 | Stats | Aktive Streams, Bibliotheks-Groesse (Filme/Serien/Songs) |
+| 2x1 | Mini-Karussell | 2-3 kuerzlich hinzugefuegte Cover-Thumbnails mit Titel |
+| 2x2 | Cover-Karussell | Grosses Karussell mit Cover-Art, Titel, Artist/Year, Auto-Slide |
+
+**widgetData-Idee:** \`{ recentItems: [{ title, image, year }], isPlaying, nowPlaying }\`
+**Shared Components:** WidgetHeader (Status-Dot), ControlButton (Play/Pause falls interaktiv)
+
+## Monitoring / Virtualisierung (Proxmox, Portainer, Docker)
+
+| Groesse | Design | Inhalt |
+|---------|--------|--------|
+| 1x1 | Stats | CPU, RAM, Uptime, Running VMs/Container |
+| 2x1 | Status-Liste | Kompakte Liste: VM/Container-Name + Status-Dot (running/stopped) |
+| 2x2 | Resource-Grid | Karten pro VM/Container mit CircularProgress fuer CPU + RAM |
+
+**widgetData-Idee:** \`{ vms: [{ name, status, cpu, ram, uptime }] }\`
+**Shared Components:** CircularProgress (CPU/RAM Gauges), WidgetHeader, HorizontalProgressBar
+**Entity-Crawler:** Ja! \`crawlEntities\` liefert VMs/Container als waehlbare Entities.
+
+## Smart Home (Home Assistant, openHAB)
+
+| Groesse | Design | Inhalt |
+|---------|--------|--------|
+| 1x1 | Stats | Entity-Count, Aktive Automations, Unreachable Devices |
+| 2x1 | Mini Entity-Grid | 4-6 Entities als kleine Karten mit Icon + State |
+| 2x2 | Entity-Dashboard | Grosses Grid mit Entity-Karten, State-Anzeige, ggf. Toggle-Buttons |
+
+**widgetData-Idee:** \`{ entities: [{ id, name, state, domain, icon }] }\`
+**Shared Components:** WidgetHeader, ControlButton (Toggle On/Off)
+**Entity-Crawler:** Ja! \`crawlEntities\` liefert Domains (light, sensor, switch, climate) mit Entities.
+
+## Netzwerk (OPNsense, Pi-hole, AdGuard, Unifi)
+
+| Groesse | Design | Inhalt |
+|---------|--------|--------|
+| 1x1 | Stats | DNS Queries, Blocked, Block-Rate %, Latenz |
+| 2x1 | Mini-Sparkline | Traffic-Verlauf der letzten Stunde + aktuelle Werte |
+| 2x2 | Dashboard | Traffic-Chart (SparklineChart) + Top-Blocked-Liste + Interface-Status |
+
+**widgetData-Idee:** \`{ trafficHistory: number[], topBlocked: [{ domain, count }] }\`
+**Shared Components:** SparklineChart (Traffic), HorizontalProgressBar (Block-Rate), WidgetHeader
+
+## Storage (TrueNAS, Synology, Unraid)
+
+| Groesse | Design | Inhalt |
+|---------|--------|--------|
+| 1x1 | Stats | Belegt/Frei, Pool-Gesundheit, Uptime |
+| 2x1 | Pool-Balken | Pools als HorizontalProgressBar mit Belegung |
+| 2x2 | Storage-Dashboard | Pool-Grid mit Disk-Health, Temperatur, SMART-Status |
+
+**widgetData-Idee:** \`{ pools: [{ name, used, total, health, disks: [{ temp, smart }] }] }\`
+**Shared Components:** HorizontalProgressBar (Pool-Belegung), CircularProgress (Health), WidgetHeader
+
+## Downloads (SABnzbd, qBittorrent, Transmission, Sonarr/Radarr)
+
+| Groesse | Design | Inhalt |
+|---------|--------|--------|
+| 1x1 | Stats | Download-Speed, Queue-Size, Active Downloads |
+| 2x1 | Mini-Queue | Top 3 Downloads mit Progress + Speed |
+| 2x2 | Volle Queue | Alle Downloads mit Fortschrittsbalken, Speed, ETA |
+
+**widgetData-Idee:** \`{ downloads: [{ name, progress, speed, eta, status }] }\`
+**Shared Components:** HorizontalProgressBar (Progress), WidgetHeader
+
+## Allgemeine Widget-Regeln
+
+- **2x2 soll HERAUSSTECHEN** — nicht einfach groessere Stats, sondern visuelle Daten
+- **2x1 Mini-Widget ist REDUZIERT** — kompakte Version des 2x2, nicht identisch
+- **Immer loading/error/ok States** — WidgetHeader mit Status-Dot
+- **widgetData fuer alle Nicht-Stats-Daten** — Cover-Bilder, Listen, Charts-Daten
+- **Deutsche Labels** — "Streams", "Belegt", "Geschwindigkeit", nicht englisch
+`,
+
+  tileDialogFlow: `
+# TileDialog UX-Flow: Was passiert wann?
+
+Der Agent MUSS diesen Flow verstehen, weil er bestimmt WANN welche
+Plugin-Features im UI erscheinen. Das beeinflusst direkt das Design
+von configFields, statOptions, und crawlEntities.
+
+## Chronologischer Ablauf
+
+\`\`\`
+┌─────────────────────────────────────────────────────┐
+│ 1. USER GIBT TITEL EIN                              │
+│    → Auto-Detection: Passt Titel zu einem Plugin?   │
+│    → Falls ja: "Enhanced" Toggle erscheint           │
+└──────────────────────┬──────────────────────────────┘
+                       │ User aktiviert Enhanced
+┌──────────────────────▼──────────────────────────────┐
+│ 2. VERBINDUNGS-AUSWAHL                              │
+│    → "Bestehende Verbindung waehlen" (Dropdown)     │
+│    → ODER "Neue Verbindung anlegen"                  │
+│                                                      │
+│    Falls neue Verbindung:                            │
+│    → Connection-Fields erscheinen (apiUrl, apiKey)   │
+│    → "Verbindung testen" Button                      │
+└──────────────────────┬──────────────────────────────┘
+                       │ User klickt "Verbindung testen"
+                       │ (ODER waehlt bestehende Verbindung)
+┌──────────────────────▼──────────────────────────────┐
+│ 3. NACH ERFOLGREICHEM TEST — Drei Dinge gleichzeitig│
+│                                                      │
+│    a) GROESSEN-AUSWAHL erscheint                     │
+│       → Buttons: 1x1, 2x1, 2x2 (nur supportedSizes)│
+│                                                      │
+│    b) FEATURE-FIELDS erscheinen                      │
+│       → Widget-spezifische Config (carouselSpeed)    │
+│       → NUR wenn aktuelles Layout = "widget"         │
+│                                                      │
+│    c) ENTITY-CRAWLER laeuft (falls Plugin hat)       │
+│       → System ruft crawlEntities() auf              │
+│       → Bei Erfolg: Entity-Picker erscheint          │
+└──────────────────────┬──────────────────────────────┘
+                       │
+┌──────────────────────▼──────────────────────────────┐
+│ 4. STAT/ENTITY AUSWAHL                              │
+│                                                      │
+│    ENTWEDER: Entity-Picker (wenn crawlEntities)      │
+│    → Gruppierte Entities (Light, Sensor, Climate)    │
+│    → Checkboxen, max je nach Groesse                 │
+│    → Gespeichert als selectedEntities                │
+│                                                      │
+│    ODER: Stat-Options (wenn keine Entities)          │
+│    → Checkboxen fuer statOptions                     │
+│    → Gespeichert als visibleStats                    │
+└──────────────────────┬──────────────────────────────┘
+                       │ User klickt "Hinzufuegen"
+┌──────────────────────▼──────────────────────────────┐
+│ 5. SPEICHERN                                         │
+│    → AppConnection wird erstellt (verschluesselt)    │
+│    → Tile wird erstellt mit enhancedConfig           │
+│    → Polling startet (alle 30s fetchStats)           │
+└─────────────────────────────────────────────────────┘
+\`\`\`
+
+## Zwei Konfigurationskontexte (KRITISCH!)
+
+Das Dashboard speichert Plugin-Daten in ZWEI getrennten Orten:
+
+### AppConnection.config (die VERBINDUNG)
+- **Wo:** Datenbank, AES-256-GCM verschluesselt
+- **Was:** apiUrl, apiKey, accessToken, username, password, refreshToken
+- **Wann gesetzt:** Beim Anlegen/Bearbeiten der Verbindung
+- **Geteilt:** Eine Verbindung kann von MEHREREN Tiles genutzt werden
+- **Im Plugin:** Kommt als \`config.apiUrl\`, \`config.apiKey\` etc. an
+
+### Tile.enhancedConfig (die ANZEIGE)
+- **Wo:** Datenbank, AES-256-GCM verschluesselt
+- **Was:** visibleStats, selectedEntities, carouselSpeed, mediaCategory
+- **Wann gesetzt:** Beim Anlegen/Bearbeiten der Tile
+- **Pro Tile:** Jede Tile hat eigene Anzeige-Einstellungen
+- **Im Plugin:** Kommt als \`config.visibleStats\`, \`config.selectedEntities\` etc. an
+
+### Merge in fetchStats
+\`\`\`typescript
+// Das Dashboard merged BEIDE Configs bevor es fetchStats aufruft:
+const mergedConfig = { ...connectionConfig, ...tileConfig };
+plugin.fetchStats(mergedConfig);
+// → Plugin erhaelt ALLES in einem Objekt:
+// { apiUrl, apiKey, visibleStats, selectedEntities, carouselSpeed, ... }
+\`\`\`
+
+## Was bedeutet das fuer den Plugin-Entwickler?
+
+### configFields Split:
+
+**Connection-Fields** (werden sofort angezeigt):
+Felder mit key = apiUrl, apiKey, accessToken, username, password, oder type = oauth
+→ Diese landen in AppConnection.config
+
+**Feature-Fields** (erscheinen NACH dem Verbindungstest):
+Alle anderen Felder (z.B. carouselSpeed, mediaCategory, entityFilter)
+→ Diese landen in Tile.enhancedConfig
+→ Werden NUR angezeigt wenn Layout = "widget" (fuer widget-spezifische Optionen)
+
+### WICHTIG: Dynamisches Options-Menue pro Groesse
+
+Jede Tile-Groesse hat ihr EIGENES Options-Fenster im TileDialog!
+Wenn der User die Groesse wechselt, aendert sich was angezeigt wird:
+
+\`\`\`
+User waehlt 1x1 → Nur Stat-Checkboxen (max 3), KEINE Feature-Fields
+User waehlt 2x1 mit layout "detailed" → Stat-Checkboxen (max 6), KEINE Widget-Fields
+User waehlt 2x1 mit layout "widget" → Stat-Checkboxen + Widget-spezifische Fields
+User waehlt 2x2 mit layout "widget" → Stat-Checkboxen + ALLE Widget-Fields
+\`\`\`
+
+**Beispiel:** Ein Media-Plugin hat ein \`select\`-Feld "Darstellung" mit
+Optionen "Karussell" und "Liste". Wenn der User "Karussell" waehlt,
+sollen weitere Felder erscheinen (carouselSpeed, carouselItems).
+Bei "Liste" verschwinden diese Felder.
+
+**Wie implementieren:** Nutze \`type: "select"\` als Steuerfeld und definiere
+die abhaengigen Felder so, dass sie fuer die jeweilige Auswahl relevant sind.
+Das Plugin liefert alle Felder — das Dashboard zeigt nur die fuer das
+aktuelle Layout relevanten an.
+
+### Entity-Crawler Timing:
+
+\`crawlEntities()\` wird automatisch VOM SYSTEM aufgerufen — NICHT vom User.
+Der Ablauf ist:
+1. User gibt Connection-Daten ein
+2. User klickt "Verbindung testen"
+3. \`testConnection(config)\` wird aufgerufen
+4. Bei Erfolg: System ruft automatisch \`crawlEntities(config)\` auf
+5. Entity-Picker erscheint mit den Ergebnissen
+6. User waehlt Entities → gespeichert als \`selectedEntities\`
+
+Der Plugin-Entwickler muss NUR \`crawlEntities()\` implementieren.
+Das Dashboard uebernimmt den gesamten UI-Flow automatisch.
+`,
 } as const;

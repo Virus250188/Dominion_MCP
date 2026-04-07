@@ -9,7 +9,15 @@
 
 export const TILE_SPECS = {
   comparison: `
-# Tile-Groessen Vergleich
+# Tile-Groessen: Rollen und Vergleich
+
+## Die drei Rollen
+
+- **1x1 = STATUSANZEIGE** — Auf einen Blick: Ist alles OK? 2-3 Kennzahlen. Kein Widget.
+- **2x1 = DETAIL oder MINI-WIDGET** — Mehr Stats ODER ein kompaktes Widget (Liste, Mini-Chart). Reduziert gegenueber 2x2.
+- **2x2 = VISUELLES PREMIUM-WIDGET** — Die Highlight-Ansicht. Cover-Karussell, Entity-Grid, System-Dashboard. Soll herausstechen.
+
+## Technischer Vergleich
 
 | Eigenschaft       | 1x1 (Klein)         | 2x1 (Mittel)           | 2x2 (Gross)              |
 |-------------------|---------------------|------------------------|--------------------------|

@@ -31,7 +31,7 @@ export function registerKnowledgeTools(server: McpServer): void {
   // ── get_agent_workflow ────────────────────────────────────────────────
   server.tool(
     "get_agent_workflow",
-    "Returns the complete 10-step agent workflow for building a plugin from requirements to ZIP delivery. Call AFTER get_framework_overview to understand the tool call sequence and development flow.",
+    "Returns the complete agent workflow with a 4-phase requirements checklist (understand service, ask user, design decisions, self-check) and the 10-step development flow. Call AFTER get_framework_overview. Includes guidance on when to ask questions vs when to code.",
     async () => {
       return {
         content: [{ type: "text" as const, text: FRAMEWORK.agentWorkflow }],
@@ -204,6 +204,23 @@ export function registerKnowledgeTools(server: McpServer): void {
         COMPONENTS.sparklineChart,
         COMPONENTS.horizontalProgressBar,
         COMPONENTS.controlButton,
+      ].join("\n\n---\n\n");
+
+      return {
+        content: [{ type: "text" as const, text }],
+      };
+    },
+  );
+
+  // ── get_app_design_guide ──────────────────────────────────────────────
+  server.tool(
+    "get_app_design_guide",
+    "Returns guidance for designing a good Enhanced App: what makes a proper app (vs just a hyperlink), Service-Type to Widget-Design mapping (Media, Monitoring, Smart Home, Network, Storage, Downloads), and the complete TileDialog UX flow with timing gates. Call EARLY — after get_framework_overview, BEFORE scaffold_plugin.",
+    async () => {
+      const text = [
+        FRAMEWORK.appDesignGuidance,
+        PATTERNS.widgetDesignByServiceType,
+        PATTERNS.tileDialogFlow,
       ].join("\n\n---\n\n");
 
       return {
