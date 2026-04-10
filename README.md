@@ -6,10 +6,10 @@ An MCP (Model Context Protocol) server that helps AI agents develop Enhanced App
 
 This MCP server acts as a **complete knowledge base and toolkit** for AI coding assistants. When connected, the agent can build a production-ready plugin **without ever needing access to the Dashboard source code** -- the result is a ZIP file ready for upload.
 
-- **Knowledge Tools** -- Framework architecture, tile specs, data contracts, widget patterns, shared utilities & components source code
-- **Scaffold Tools** -- Generate complete plugin code, widget components, and manifests
-- **Validation Tools** -- Validate plugin structure, stats output, and render hints
-- **Test Tools** -- Standalone code checks (no Dashboard access needed)
+- **Knowledge Tools** -- Framework architecture, tile specs, data contracts, widget patterns, notification system, shared utilities & components source code
+- **Scaffold Tools** -- Generate complete plugin code, widget components, manifests, and READMEs
+- **Validation Tools** -- Validate plugin structure, stats output, and render hints against 20+ rules
+- **Test Tools** -- Standalone TypeScript syntax checks (no Dashboard access needed)
 - **Package Tools** -- Create ready-to-upload ZIP files
 - **Preview Tools** -- Generate HTML tile previews in the Dashboard's glass theme
 
@@ -71,55 +71,57 @@ The agent will:
 2. Call `get_agent_workflow` to learn the development flow
 3. Call `scaffold_plugin` to generate the code + manifest
 4. Customize the generated code (fill in API endpoints, auth, labels)
-5. Call `validate_plugin_structure` to check for issues
-6. Call `create_plugin_zip` to package everything as a ZIP
-7. Hand you the ZIP file for upload via Dashboard UI
+5. Call `validate_plugin` to check for issues
+6. Call `preview_tile` to see a visual preview
+7. Call `create_plugin_zip` to package everything as a ZIP
+8. Hand you the ZIP file for upload via Dashboard UI
 
 **No Dashboard access needed.** The agent works entirely in a separate directory and delivers a ZIP.
 
-## Available Tools (24)
+## Available Tools (25)
 
-### Knowledge (12 tools)
+### Knowledge (15 tools)
 
 | Tool | Description |
 |------|-------------|
 | `get_framework_overview` | **Start here.** System architecture, plugin lifecycle, developer scope |
 | `get_agent_workflow` | Complete 10-step development workflow from requirements to ZIP |
+| `get_app_design_guide` | Service-type to widget-design mapping, proactive design suggestions |
 | `get_tile_size_spec` | Detailed spec for a specific tile size (1x1, 2x1, 2x2) |
 | `get_tile_size_comparison` | Comparison table + decision guide for all sizes |
 | `get_data_contracts` | TypeScript interfaces, fetchStats patterns, color conventions |
 | `get_widget_contract` | Widget props, WidgetHeader, registration, Widget-Actions pattern |
 | `get_entity_crawler_spec` | CrawlEntityGroup interface, entity picker flow |
+| `get_notification_spec` | Notification system: supportsNotifications, webhook API, categories |
 | `get_performance_guidelines` | Performance rules, anti-patterns, timeouts |
 | `get_implementation_checklist` | Complete checklist for plugin development |
 | `get_hello_world_example` | Complete minimal plugin example with manifest + code |
 | `get_shared_utilities` | Source code of Dashboard utility functions (formatBytes, etc.) |
 | `get_shared_components` | Source code of shared widget components (WidgetHeader, etc.) |
-| `get_deployment_guide` | Docker deployment, ZIP upload, installation guide |
+| `get_deployment_guide` | ZIP upload, manual install, Docker, upload validation rules |
 
-### Scaffold (3 tools)
+### Scaffold (4 tools)
 
 | Tool | Description |
 |------|-------------|
-| `scaffold_plugin` | Generate complete plugin (manifest + index.ts + optional OAuth) |
-| `scaffold_widget` | Generate widget component with size-specific layouts |
+| `scaffold_plugin` | Generate complete plugin (manifest + index.ts + optional OAuth/Crawler) |
+| `scaffold_widget` | Generate widget component with size-specific layouts and configurable icon |
 | `get_registration_steps` | Step-by-step guide for ZIP delivery and installation |
+| `generate_readme` | Generate a README.md for the plugin in Dominion docs format |
 
 ### Validation (3 tools)
 
 | Tool | Description |
 |------|-------------|
-| `validate_plugin_structure` | Static analysis of plugin code (20+ checks) |
-| `validate_stats_output` | Validate PluginStats JSON against schema |
-| `validate_render_hints` | Validate renderHints for completeness and rules |
+| `validate_plugin` | Static analysis of plugin code, manifest, and widget (25+ checks with fix suggestions) |
+| `validate_stats_output` | Validate PluginStats JSON against schema (items, colors, status) |
+| `validate_render_hints` | Validate renderHints for completeness, layout-per-size rules, widget consistency |
 
-### Test (3 tools)
+### Test (1 tool)
 
 | Tool | Description |
 |------|-------------|
-| `test_plugin_completeness` | Verify all files, exports, and fields are present |
-| `test_typescript_syntax` | Check bracket balance, imports, common mistakes |
-| `test_plugin_export` | Verify export shape, required fields, async methods |
+| `test_typescript_syntax` | Check bracket balance, imports, console.log usage, common mistakes |
 
 ### Package (1 tool)
 
@@ -146,11 +148,25 @@ my-plugin/
 
 ### Supported Features
 
-- **Tile Sizes**: 1x1 (compact stats), 2x1 (detailed/widget), 2x2 (full widget)
-- **Auth Methods**: API Key, Username/Password, OAuth (framework-managed)
+- **Tile Sizes**: 1x1 (compact stats), 2x1 (detailed/mini-widget), 2x2 (full premium widget)
+- **Auth Methods**: API Key, Username/Password, OAuth (framework-managed flow)
 - **Widget Components**: Custom React components with WidgetHeader, shared UI components
 - **Entity Crawling**: For services with selectable entities (smart home, containers)
+- **Notifications**: Plugins can declare `supportsNotifications: true` to enable webhook-based notifications (info, warning, critical, update)
 - **ZIP Upload**: Package and upload plugins via Dashboard Settings > Plugins > Upload
+- **Auto-Discovery**: Drop plugin folder + restart -- no core files to edit
+
+### Tile Sizes = Roles
+
+Each size serves a different purpose on the dashboard:
+
+| Size | Role | Content |
+|------|------|---------|
+| **1x1** | Status indicator | 1-3 key stats, no widget |
+| **2x1** | Detail or mini-widget | Up to 6 stats OR compact widget |
+| **2x2** | Visual premium widget | Full widget with charts, carousels, grids |
+
+Users can have **multiple tiles** of the same app (e.g., a 1x1 for quick status + a 2x2 for the full widget), each with their own display settings but sharing the same connection.
 
 ### Installation Methods
 
@@ -163,19 +179,20 @@ Works with Docker, bare metal, and local development -- no special handling need
 
 ```
 src/
-  index.ts                # Server entry point
+  index.ts                # Server entry point (v2.2.0)
   data/
-    framework.ts          # Core system documentation + agent workflow + deployment
-    patterns.ts           # Code patterns, hello world example, shared utilities
-    tile-specs.ts         # Tile size specifications
-    components.ts         # Widget shared component source code
+    framework.ts          # Core architecture, lifecycle, API endpoints, notifications
+    patterns.ts           # Code patterns, notifications, shared utilities, anti-patterns
+    tile-specs.ts         # Tile size specifications with ASCII diagrams
+    components.ts         # Widget shared component source code (1:1 with Dashboard)
   tools/
-    knowledge.ts          # 12 knowledge retrieval tools
-    scaffold.ts           # 3 code generation tools
-    validate.ts           # 3 validation tools
-    test.ts               # 3 standalone testing tools
+    knowledge.ts          # 15 knowledge retrieval tools
+    scaffold.ts           # 4 code generation tools
+    validate.ts           # 3 validation tools (25+ checks)
+    test.ts               # 1 standalone testing tool
     package.ts            # 1 ZIP packaging tool
     preview.ts            # 1 HTML preview tool
+    _response.ts          # Shared response formatting helpers
 ```
 
 ## Development
@@ -190,6 +207,10 @@ npm run build
 # Run the server directly:
 npm start
 ```
+
+## Knowledge Sync
+
+The hardcoded knowledge in `src/data/` is synced against the Dashboard source code. Each file has a `LAST_SYNCED` timestamp. Current sync: **2026-04-10** (Dashboard v1.0.7-alpha).
 
 ## Related Projects
 
