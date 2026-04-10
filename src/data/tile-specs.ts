@@ -2,7 +2,7 @@
 // Detailed specs for each tile size in the Dominion Dashboard.
 // Served to AI agents via MCP tools to guide plugin rendering decisions.
 //
-// LAST_SYNCED: 2026-04-06
+// LAST_SYNCED: 2026-04-10
 // DASHBOARD_VERSION: 1.0.7-alpha
 // SOURCE: Dashboard/src/components/dashboard/EnhancedTile.tsx, TileDialog.tsx
 // ────────────────────────────────────────────────────────────────────────────
@@ -34,7 +34,7 @@ export const TILE_SPECS = {
 - **gridAutoRows: 160px** - Jede Grid-Zeile ist exakt 160px hoch
 - **gap: 16px (1rem)** - Abstand zwischen Tiles
 - Die tatsaechliche Hoehe eines 2x2 Tiles ist \`2 * 160 + 16 = 336px\` (inkl. Gap)
-- Responsive Breakpoints: 6 Spalten (Desktop) -> 4 Spalten (< 1024px) -> 2 Spalten (< 640px)
+- Responsive: \`repeat(auto-fill, minmax(180px, 1fr))\` (Desktop, Spaltenanzahl variiert) -> 2 Spalten fest (< 639px)
 - 1x1 Tiles sind IMMER verfuegbar, auch fuer Enhanced Apps
 - 2x1 und 2x2 sind NUR fuer Enhanced Apps mit entsprechenden supportedSizes
 
@@ -68,12 +68,12 @@ export const TILE_SPECS = {
 
 \`\`\`
 +----------------------------------+
-| [.] Online    [...] Context Menu |  <- System (nicht Entwickler)
+| [Pin]              [...] Menu   |  <- System (nicht Entwickler)
 |                                  |
-|           [ICON 48px]            |  <- System (AppIcon)
+|           [ICON 40px]            |  <- System (AppIcon)
 |                                  |
 |          "App Title"             |  <- System (tile.title)
-|       "Beschreibung"            |  <- System (tile.description)
+|       "Beschreibung"            |  <- System (tile.description, ausgeblendet wenn Stats vorhanden)
 |                                  |
 |  ---- Stats-Bereich (border) -  |  <- Entwickler kontrolliert INHALT
 |   Stat1    Stat2    Stat3       |  <- max 3 Stats sichtbar
@@ -85,12 +85,12 @@ export const TILE_SPECS = {
 - columnSpan: 1
 - rowSpan: 1
 - Hoehe: 160px (1 Grid-Zeile)
-- Breite: 1 Grid-Spalte (variiert je nach Gesamtspalten, 6 Spalten Desktop)
+- Breite: 1 Grid-Spalte (variiert je nach Container-Breite, auto-fill mit minmax 180px)
 
 ## Was der Entwickler kontrolliert
 
 Der Entwickler bestimmt ueber \`fetchStats()\` welche Stats erscheinen.
-Das System rendert alles andere: Icon, Titel, Glass Card, Online-Punkt, Context Menu.
+Das System rendert alles andere: Icon, Titel, Glass Card, Pin-Indikator, Context Menu.
 
 **1x1 Tile Styling:** Kompakter Aufbau mit \`p-3 pt-6\`, \`gap-1.5\`, Icon 40px.
 Wenn Stats vorhanden sind, wird die Beschreibung ausgeblendet fuer mehr Platz.

@@ -22,7 +22,7 @@ import { registerPackageTools } from "./tools/package.js";
 
 const server = new McpServer({
   name: "dominion-enhanced",
-  version: "2.1.0",
+  version: "2.2.0",
   description: "Hilft AI-Agents Enhanced Apps fuer das Dominion Dashboard zu bauen. Starte mit get_framework_overview, dann get_agent_workflow. Phasen: [1] Lernen -> [2] Entwerfen -> [3] Generieren -> [4] Validieren -> [5] Vorschau -> [6] Paketieren.",
 });
 

@@ -174,6 +174,21 @@ function validatePlugin(params: {
       "Missing `configFields` array.",
       `Ergaenze:\nconfigFields: [\n  { key: "apiUrl", label: "Server URL", type: "url", required: true, placeholder: "http://localhost:8096" },\n],`,
     ));
+  } else {
+    // Validate configField.type values
+    const validFieldTypes = new Set(["text", "password", "url", "textarea", "select", "number", "oauth"]);
+    const fieldTypeMatches = [...pluginCode.matchAll(/type\s*:\s*["']([^"']+)["']/g)];
+    for (const match of fieldTypeMatches) {
+      const typeValue = match[1];
+      // Skip non-configField type values (e.g. type: "enhanced")
+      if (typeValue === "enhanced" || typeValue === "standard") continue;
+      if (!validFieldTypes.has(typeValue) && !["1x1", "2x1", "2x2"].includes(typeValue)) {
+        warnings.push(warn(
+          `ConfigField type "${typeValue}" is not a recognized type.`,
+          `Gueltige Typen: "text", "password", "url", "textarea", "select", "number", "oauth"`,
+        ));
+      }
+    }
   }
 
   // 5. Has statOptions array with at least one defaultEnabled: true
@@ -555,7 +570,7 @@ function validateStatsOutput(statsJson: string): ValidationResult {
       ));
     }
 
-    const validColors = new Set(["green", "red", "yellow", "blue"]);
+    const validColors = new Set(["green", "red", "yellow"]);
 
     for (let i = 0; i < items.length; i++) {
       const item = items[i] as Record<string, unknown>;
@@ -589,8 +604,8 @@ function validateStatsOutput(statsJson: string): ValidationResult {
       if (item.color !== undefined) {
         if (typeof item.color !== "string" || !validColors.has(item.color)) {
           errors.push(err(
-            `items[${i}].color must be one of: green, red, yellow, blue. Got "${String(item.color)}".`,
-            `Gueltige Farben: "green", "red", "yellow", "blue"`,
+            `items[${i}].color must be one of: green, red, yellow. Got "${String(item.color)}".`,
+            `Gueltige Farben: "green", "red", "yellow"`,
           ));
         }
       }
@@ -673,6 +688,21 @@ function validateRenderHints(renderHintsJson: string, supportedSizes: string[]):
       if (limit !== undefined && hint.maxStats > limit) {
         warnings.push(warn(`renderHints["${size}"].maxStats is ${hint.maxStats}, recommended max for ${size} is ${limit}.`));
       }
+    }
+
+    // Layout restrictions per size
+    if (size === "1x1" && hint.layout && hint.layout !== "compact") {
+      errors.push(err(
+        `renderHints["1x1"] has layout "${String(hint.layout)}" but 1x1 only supports "compact".`,
+        `Aendere zu: "layout": "compact". 1x1 Tiles haben keinen Widget-Support.`,
+      ));
+    }
+
+    if ((size === "2x1" || size === "2x2") && hint.layout === "compact") {
+      errors.push(err(
+        `renderHints["${size}"] has layout "compact" but that is only valid for 1x1.`,
+        `Verwende "detailed" oder "widget" fuer ${size}.`,
+      ));
     }
 
     if (hint.layout === "widget") {

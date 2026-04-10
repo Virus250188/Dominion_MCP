@@ -2,7 +2,7 @@
 // Complete documentation of the Dominion Dashboard Enhanced App system.
 // Served to AI agents via MCP tools to guide plugin development.
 //
-// LAST_SYNCED: 2026-04-06
+// LAST_SYNCED: 2026-04-10
 // DASHBOARD_VERSION: 1.0.7-alpha
 // SOURCE: Dashboard/src/plugins/types.ts, registry.ts, utils.ts, validator.ts
 // ────────────────────────────────────────────────────────────────────────────
@@ -111,6 +111,13 @@ entweder in \`src/plugins/community/\` ablegen ODER ueber
   Beispiel: Das Emby Plugin liefert \`widgetData: { recentItems, mediaCategory,
   carouselSpeed, carouselItems }\` fuer ein Medien-Karussell im Widget.
 
+- **Notification-System:** Das Dashboard hat ein Notification Panel (rechte Seite).
+  Plugins koennen \`supportsNotifications: true\` setzen, damit der User sie als
+  Notification-Quelle einrichten kann. Externe Services senden Notifications
+  via \`POST /api/notifications\` mit \`X-Notification-Key\` Header.
+  Kategorien: \`"info"\` | \`"warning"\` | \`"critical"\` | \`"update"\`.
+  Notifications werden per SSE in Echtzeit an das Dashboard gepusht.
+
 - **Deutsche Sprache:** Alle Labels, Beschreibungen und Fehlermeldungen muessen
   auf Deutsch sein. Code-Kommentare bleiben auf Englisch fuer die Agent-Lesbarkeit.
 
@@ -122,6 +129,7 @@ src/plugins/
   registry.ts           # Plugin-Registry mit Validierung beim Laden
   validator.ts          # Laufzeit-Validierung (validatePlugin + validateStats)
   utils.ts              # Shared Utilities (getVisibleStats, normalizeUrl, etc.)
+  manifest.ts           # ZIP-Validierung (PluginManifest Interface, validatePluginZip)
   builtin/              # Builtin Plugins (vom Projekt mitgeliefert)
     emby/index.ts       # Referenz-Implementation (einziges Builtin)
   community/            # Community Plugins (von externen Entwicklern, Auto-Discovery)
@@ -152,6 +160,10 @@ src/components/widgets/
 | \`/api/enhanced/oauth/state\` | POST | HMAC-signierten OAuth State generieren (CSRF-Schutz) | Ja | Nein |
 | \`/api/enhanced/oauth/callback\` | GET | OAuth Callback (verifiziert HMAC-Signatur, ruft \`exchangeToken\` auf, speichert Tokens) | Ja | Nein |
 | \`/api/plugins/upload\` | POST | ZIP-Upload eines Community Plugins | Ja | Ja |
+| \`/api/notifications\` | POST | Externe Services senden Notifications (X-Notification-Key Header) | API Key | Ja |
+| \`/api/notifications\` | GET | Dashboard laedt Notifications | Ja | Nein |
+| \`/api/notifications/[id]/ack\` | POST | Notification bestaetigen | Ja | Nein |
+| \`/api/notifications/stream\` | GET | SSE-Stream fuer Echtzeit-Notifications | Ja | Nein |
 
 ## Tech Stack
 
@@ -195,11 +207,11 @@ const registry = new Map<string, AppPlugin>();
 function registerPlugin(plugin: AppPlugin, source: string): boolean {
   const errors = validatePlugin(plugin);
   if (errors.length > 0) {
-    console.error(\\\`[\\\${source}] Plugin "\\\${plugin.metadata?.id ?? "unknown"}" failed validation:\\\`, errors);
+    logger.error("plugin-registry", \\\`Validation failed for \\\${plugin.metadata?.id ?? "unknown"}\\\`, { source, errors: errors.join(", ") });
     return false;
   }
   if (registry.has(plugin.metadata.id)) {
-    console.warn(\\\`[\\\${source}] Plugin "\\\${plugin.metadata.id}" already registered -- skipping.\\\`);
+    logger.warn("plugin-registry", \\\`Duplicate plugin ID: \\\${plugin.metadata.id}\\\`, { source });
     return false;
   }
   registry.set(plugin.metadata.id, plugin);
@@ -371,7 +383,7 @@ interface StatItem {
   value: string | number; // z.B. "85%", 42, "3d 12h"
   unit?: string;          // z.B. "GB", "%", "°C"
   icon?: string;          // Lucide Icon Name, z.B. "HardDrive", "Play"
-  color?: string;         // "green" | "red" | "yellow" | "blue"
+  color?: string;         // "green" | "red" | "yellow" | undefined
 }
 
 interface PluginStats {
@@ -404,7 +416,6 @@ interface PluginStats {
 | \`green\`  | Gut, aktiv, online, niedrige Auslastung          | text-emerald-400    |
 | \`red\`    | Schlecht, offline, Fehler, hohe Auslastung (>85%) | text-red-400       |
 | \`yellow\` | Warnung, mittlere Auslastung (>70%)              | text-yellow-400     |
-| \`blue\`   | Informativ, Temperatur, neutral                  | text-sky-400        |
 | (kein)   | Standard-Textfarbe, keine besondere Bedeutung    | text-foreground     |
 `,
 
@@ -550,7 +561,18 @@ selectedEntities, etc.). Das bedeutet:
 - \`id\` muss mit \`metadata.id\` und dem Ordnernamen uebereinstimmen
 - Pflicht fuer ZIP-Upload, empfohlen fuer manuell platzierte Plugins
 
-### 13. Optional: OAuth (\`exchangeToken\` + \`refreshToken\`)
+### 14. Optional: Notification-Support (\`supportsNotifications\`)
+- Setze \`supportsNotifications: true\` wenn der Service Notifications an das Dashboard senden kann
+- Der User kann dann unter **Einstellungen > Benachrichtigungen** eine Notification-Quelle
+  fuer dieses Plugin einrichten (mit AppConnection verknuepft)
+- Der Service sendet Notifications via \`POST /api/notifications\` mit \`X-Notification-Key\` Header
+- Payload: \`{ title, message?, category, tag?, priority?, url?, icon?, expiresAt? }\`
+- Kategorien: \`"info"\` (neutral), \`"warning"\` (gelb), \`"critical"\` (rot, Pulse-Animation), \`"update"\` (blau)
+- Notifications erscheinen in Echtzeit im Notification Panel (SSE)
+- Das Plugin selbst muss KEINE Notification-Logik implementieren —
+  es deklariert nur \`supportsNotifications: true\`, der Rest ist Infrastruktur
+
+### 15. Optional: OAuth (\`exchangeToken\` + \`refreshToken\`)
 - Nur fuer Services die OAuth brauchen (kein API Key verfuegbar)
 - Plugin deklariert \`type: "oauth"\` configField mit authUrl, tokenUrl, scopes
 - Plugin implementiert \`exchangeToken(code, redirectUri, config)\` — tauscht Auth-Code gegen Tokens
@@ -567,23 +589,23 @@ selectedEntities, etc.). Das bedeutet:
 
 ### Visuelles (System rendert die Tile-Box)
 - **Glass Card Rendering:** \`glass-card\` CSS-Klasse mit Glaseffekt, Rahmen, Schatten
-- **Online-Indikator:** Gruener/roter/grauer Punkt (oben links in der Tile-Box)
-- **Pin-Icon:** Anzeige ob Tile angepinnt ist
-- **Context-Menu:** Oeffnen, Bearbeiten, Loeschen, Anheften, Gruppieren (DropdownMenu)
+- **Pin-Icon:** Anzeige ob Tile angepinnt ist (oben links)
+- **Context-Menu:** Oeffnen, Bearbeiten, Loeschen, Anheften, Gruppieren (DropdownMenu, oben rechts)
 - **Theme/Glass-Styling:** Automatisch via CSS Custom Properties und \`[data-theme]\`
 - **Hover-Effekte:** Scale (1.03/1.02/1.01) und Y-Translation (-2px) via motion
+- **HINWEIS:** Tiles haben KEINEN Online-Indikator. Der Status-Punkt existiert nur im WidgetHeader (innerhalb von Widget-Komponenten).
 
 ### Interaktion (System handhabt alle Events)
 - **Drag & Drop:** Sortierung der Tiles per @dnd-kit/react (useSortable)
 - **Click-Handler:** Oeffnet die App-URL in neuem Tab (\`window.open\`)
-- **Responsive Grid:** Automatische Spaltenanpassung (6 -> 4 -> 2 Spalten)
+- **Responsive Grid:** Automatische Spaltenanpassung via auto-fill (< 639px: 2 Spalten fest)
 
 ### Daten-Management (System handhabt den gesamten Datenfluss)
 - **Polling-Loop:** 30-Sekunden-Intervall via setInterval in EnhancedTile
 - **Tab-Visibility:** document.visibilitychange Event pausiert/resumed Polling
 - **API-Proxy:** \`/api/enhanced/[appId]\` laedt Tile aus DB, ruft fetchStats auf
 - **Stats-Validierung:** \`validateStats()\` sanitized und begrenzt Items auf max 6
-- **Grid-Layout:** \`gridAutoRows: 160px\`, 6-Spalten Grid, columnSpan/rowSpan steuern die Tile-Groesse
+- **Grid-Layout:** \`gridAutoRows: 160px\`, \`gridTemplateColumns: repeat(auto-fill, minmax(180px, 1fr))\`, columnSpan/rowSpan steuern die Tile-Groesse
 
 ### Konfiguration (System stellt die UI bereit)
 - **TileDialog:** Auto-Detection, Enhanced-Config-UI, Groessen-Auswahl
@@ -832,7 +854,8 @@ mein-plugin.zip
 └── types.ts                      # Optional: Eigene Typen
 \`\`\`
 
-**WICHTIG:** Dateien muessen auf ROOT-Level der ZIP liegen (KEIN Wrapper-Ordner!).
+**EMPFOHLEN:** Dateien auf ROOT-Level der ZIP. Ein einzelner Wrapper-Ordner
+wird automatisch erkannt und entfernt (Prefix-Stripping).
 Das Dashboard extrahiert automatisch nach \`src/plugins/community/{manifest.id}/\`
 basierend auf der ID im Manifest.
 
@@ -846,7 +869,10 @@ Das Dashboard prueft beim ZIP-Upload:
 5. ID ist kebab-case, Version ist semver
 6. \`index.ts\` vorhanden und exportiert \`const plugin\`
 7. Falls \`hasWidget: true\`: Widget-Datei vorhanden
-8. ID kollidiert nicht mit bestehenden Plugins
-9. Optional: \`minDashboardVersion\` Kompatibilitaet
+8. **Import-Validierung:** Relative Imports die aus dem Plugin-Ordner escapen
+   (\`../\`) werden blockiert. Nutze \`@/\` Pfade fuer Dashboard-Imports
+   (z.B. \`import { X } from "@/components/widgets/shared/X"\`)
+9. ID kollidiert nicht mit bestehenden Plugins
+10. Optional: \`minDashboardVersion\` Kompatibilitaet
 `,
 } as const;

@@ -386,9 +386,10 @@ function generateWidgetCode(params: {
   pluginId: string;
   pluginName: string;
   color: string;
+  icon: string;
   sizes: string[];
 }): string {
-  const { pluginId, pluginName, color, sizes } = params;
+  const { pluginId, pluginName, color, icon, sizes } = params;
   const pascalName = toPascalCase(pluginName.replace(/\s+/g, ""));
   const widgetName = `${pascalName}Widget`;
 
@@ -407,7 +408,7 @@ function ${widgetName}2x1({ stats }: WidgetProps) {
   return (
     <div className="flex flex-col h-full">
       <WidgetHeader
-        icon="Activity"
+        icon="${icon}"
         iconColor="${color}"
         title="${pluginName}"
         status={stats.status === "ok" ? "online" : stats.status === "error" ? "offline" : "unknown"}
@@ -452,7 +453,7 @@ function ${widgetName}2x2({ stats }: WidgetProps) {
   return (
     <div className="flex flex-col h-full">
       <WidgetHeader
-        icon="Activity"
+        icon="${icon}"
         iconColor="${color}"
         title="${pluginName}"
         subtitle="Dashboard"
@@ -742,13 +743,17 @@ export function registerScaffoldTools(server: McpServer): void {
       color: z
         .string()
         .describe("Brand color as hex, e.g. '#52b54b'"),
+      icon: z
+        .string()
+        .optional()
+        .describe("Lucide icon name for WidgetHeader, e.g. 'MonitorPlay'. Defaults to 'Activity'."),
       sizes: z
         .array(z.string())
         .describe(
           'Widget sizes to support, e.g. ["2x1", "2x2"]. Only 2x1 and 2x2 are valid widget sizes.',
         ),
     },
-    async ({ pluginId, pluginName, color, sizes }) => {
+    async ({ pluginId, pluginName, color, icon, sizes }) => {
       const validSizes = sizes.filter((s) => s === "2x1" || s === "2x2");
       if (validSizes.length === 0) {
         return error("Mindestens eine Widget-Groesse (2x1 oder 2x2) muss angegeben werden.");
@@ -760,11 +765,12 @@ export function registerScaffoldTools(server: McpServer): void {
         pluginId,
         pluginName,
         color,
+        icon: icon || "Activity",
         sizes: validSizes,
       });
 
       return success(
-        `# Generierte Widget-Datei: ${pluginId}/${widgetName}.tsx\n\n\`\`\`tsx\n${code}\`\`\`\n\n**Naechste Schritte:**\n1. TODO: Lucide-Icon im WidgetHeader anpassen (statt "Activity")\n2. In der Plugin \`index.ts\`: \`export const widget = ${widgetName};\` und \`export const widgetName = "${widgetName}";\`\n3. Sicherstellen dass \`renderHints.widgetComponent\` im Plugin auf "${widgetName}" gesetzt ist\n4. Mit \`create_plugin_zip\` als ZIP verpacken (widgetCode + widgetFileName mitgeben)`,
+        `# Generierte Widget-Datei: ${pluginId}/${widgetName}.tsx\n\n\`\`\`tsx\n${code}\`\`\`\n\n**Naechste Schritte:**\n1. In der Plugin \`index.ts\`: \`export const widget = ${widgetName};\` und \`export const widgetName = "${widgetName}";\`\n2. Sicherstellen dass \`renderHints.widgetComponent\` im Plugin auf "${widgetName}" gesetzt ist\n3. Mit \`create_plugin_zip\` als ZIP verpacken (widgetCode + widgetFileName mitgeben)`,
       );
     },
   );

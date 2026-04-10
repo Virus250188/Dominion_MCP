@@ -194,6 +194,15 @@ export function registerKnowledgeTools(server: McpServer): void {
     },
   );
 
+  // ── get_notification_spec ─────────────────────────────────────────
+  server.tool(
+    "get_notification_spec",
+    "[Phase 1: Lernen] Returns notification system spec: supportsNotifications flag, NotificationPayload, categories, webhook API, SSE delivery. Only needed for plugins that can send notifications.",
+    async () => {
+      return success(PATTERNS.notificationPattern);
+    },
+  );
+
   // ── get_deployment_guide ─────────────────────────────────────────────
   server.tool(
     "get_deployment_guide",

@@ -2,7 +2,7 @@
 // Code patterns, anti-patterns, and implementation guidelines for Enhanced Apps.
 // Served to AI agents via MCP tools to guide correct plugin implementation.
 //
-// LAST_SYNCED: 2026-04-06
+// LAST_SYNCED: 2026-04-10
 // DASHBOARD_VERSION: 1.0.7-alpha
 // SOURCE: Dashboard/src/plugins/types.ts, utils.ts, builtin/emby/index.ts
 // ────────────────────────────────────────────────────────────────────────────
@@ -78,6 +78,9 @@ export const plugin: AppPlugin = {
   async refreshToken?(config: PluginConfig): Promise<{
     accessToken: string; refreshToken?: string; expiresAt?: number;
   }> { ... },
+
+  // Optional: Notification-Support
+  supportsNotifications?: boolean,  // true = Plugin kann als Notification-Quelle dienen
 };
 
 // PFLICHT fuer Auto-Discovery (auch wenn null):
@@ -105,13 +108,19 @@ interface PluginMetadata {
 interface ConfigField {
   key: string;          // Config-Key (z.B. "apiUrl", "apiKey", "accessToken")
   label: string;        // Formular-Label auf Deutsch (z.B. "Emby Server URL")
-  type: "text" | "password" | "url" | "textarea" | "select" | "number";
+  type: "text" | "password" | "url" | "textarea" | "select" | "number" | "oauth";
   placeholder?: string; // Platzhaltertext (z.B. "http://emby.local:8096")
   required?: boolean;   // Pflichtfeld? (apiUrl ist fast immer required)
   description?: string; // Hilfetext auf Deutsch unter dem Feld
   options?: { label: string; value: string }[];  // Nur fuer type: "select"
   min?: number;         // Nur fuer type: "number"
   max?: number;         // Nur fuer type: "number"
+  oauth?: {             // Nur fuer type: "oauth"
+    authUrl: string;    // Authorization Endpoint des Providers
+    tokenUrl: string;   // Token Exchange Endpoint
+    scopes: string[];   // Benoetigte Scopes
+    pkce?: boolean;     // Optional: PKCE Flow verwenden
+  };
 }
 \`\`\`
 
@@ -613,7 +622,7 @@ interface StatItem {
   value: string | number; // z.B. "72%", 42, "3d 12h"
   unit?: string;          // z.B. "GB", "%", "MB/s", "°C"
   icon?: string;          // Lucide-Icon-Name z.B. "HardDrive", "Activity"
-  color?: string;         // "green" | "red" | "yellow" | "blue" | undefined
+  color?: string;         // "green" | "red" | "yellow" | undefined
 }
 \`\`\`
 `,
@@ -717,14 +726,14 @@ interface CrawlResult {
 interface CrawlEntityGroup {
   domain: string;     // Technischer Key (z.B. "sensor", "light")
   label: string;      // Anzeigename auf Deutsch (z.B. "Sensoren", "Lichter")
-  icon?: string;      // Lucide-Icon Name (z.B. "Activity", "Lightbulb")
+  icon: string;       // Lucide-Icon Name (z.B. "Activity", "Lightbulb") — PFLICHT
   entities: CrawlEntity[];
 }
 
 interface CrawlEntity {
   id: string;         // Eindeutige Entity-ID (z.B. "sensor.temperatur")
   name: string;       // Anzeigename (z.B. "Raumtemperatur")
-  state?: string;     // Aktueller Zustand (z.B. "22.5 °C", "An")
+  state: string;      // Aktueller Zustand (z.B. "22.5 °C", "An") — PFLICHT
 }
 \`\`\`
 
@@ -1084,36 +1093,31 @@ Der Name muss EXAKT mit \`renderHints[size].widgetComponent\` uebereinstimmen.
   registrationPattern: `
 # Registrierungs-Pattern: Wie ein neues Community Plugin registriert wird
 
-## NUR 1 Datei muss angepasst werden: \`src/plugins/community/index.ts\`
+## KEINE Core-Dateien bearbeiten — vollstaendig automatisch!
 
-### Schritt 1: Plugin-Ordner erstellen
+\`src/plugins/community/index.ts\` ist **AUTO-GENERATED** durch
+\`scripts/generate-community-plugins.ts\` (bzw. \`npm run generate:plugins\`).
+Diese Datei NICHT manuell editieren — Aenderungen werden ueberschrieben.
 
-\`\`\`
-src/plugins/community/meinservice/index.ts
-\`\`\`
+### Installation per ZIP-Upload (empfohlen)
 
-### Schritt 2: Export + Array-Eintrag in community/index.ts
+1. Plugin als ZIP erstellen (via \`create_plugin_zip\` Tool)
+2. Dashboard: **Einstellungen > Plugins > Upload**
+3. Dashboard validiert, extrahiert und registriert automatisch
+4. Server neustarten — fertig
 
-\`\`\`typescript
-// ── Community plugin exports go here ──
-export { meinPlugin } from "./meinservice";
+### Installation per manuelles Ablegen
 
-// All community plugins collected for the registry.
-export const communityPlugins: AppPlugin[] = [
-  meinPlugin,  // <-- Neues Plugin
-];
-
-// Optional: Widget-Map (nur wenn Plugin ein Widget hat)
-export const communityWidgets: Record<string, ComponentType<unknown>> = {
-  "MeinServiceWidget": MeinServiceWidget,  // <-- Automatisch registriert
-};
-\`\`\`
+1. Plugin-Ordner nach \`src/plugins/community/{plugin-id}/\` kopieren
+2. \`npm run generate:plugins\` ausfuehren (oder Server neustarten)
+3. Auto-Discovery erkennt das Plugin und generiert die Barrel-Datei neu
 
 ### Das war's! Keine weiteren Core-Dateien noetig.
 
-- **Kein \`registry.ts\` bearbeiten** - Community Plugins werden automatisch importiert
-- **Kein \`icons.ts\` bearbeiten** - Icons werden automatisch aus metadata.icon aufgeloest
-- **Kein \`widgets/registry.ts\` bearbeiten** - Community Widgets werden automatisch registriert
+- **Kein \`registry.ts\` bearbeiten** — Community Plugins werden automatisch importiert
+- **Kein \`icons.ts\` bearbeiten** — Icons werden automatisch aus metadata.icon aufgeloest
+- **Kein \`widgets/registry.ts\` bearbeiten** — Community Widgets werden automatisch registriert
+- **Kein \`community/index.ts\` bearbeiten** — wird automatisch generiert
 
 ## Validierung beim Start
 
@@ -1126,8 +1130,8 @@ Nach der Registrierung prueft \`validatePlugin()\` automatisch:
 - fetchStats ist eine Funktion
 - testConnection ist eine Funktion
 
-Bei Fehler: Plugin wird NICHT registriert, Fehler in Console.
-Doppelte IDs werden erkannt und uebersprungen (Warnung in Console).
+Bei Fehler: Plugin wird NICHT registriert, Fehler wird geloggt (logger.error).
+Doppelte IDs werden erkannt und uebersprungen (logger.warn).
 `,
 
   tileDialogUx: `
@@ -1146,11 +1150,11 @@ Im TileDialog werden die \`configFields\` eines Plugins in zwei Gruppen aufgetei
 const CONNECTION_KEYS = new Set(["apiUrl", "apiKey", "accessToken", "username", "password"]);
 
 const connectionFields = plugin.configFields.filter(
-  (f) => CONNECTION_KEYS.has(f.key) || f.required
+  (f) => CONNECTION_KEYS.has(f.key) || f.required || f.type === "oauth"
 );
 
 const featureFields = plugin.configFields.filter(
-  (f) => !CONNECTION_KEYS.has(f.key) && !f.required
+  (f) => !CONNECTION_KEYS.has(f.key) && !f.required && f.type !== "oauth"
 );
 \`\`\`
 
@@ -1170,6 +1174,27 @@ Plugin-Entwickler muessen darauf achten:
 - **Feature-Felder:** Alle anderen (mediaCategory, carouselSpeed, etc.) mit \`required: false\`
   (oder required weglassen, da default false)
 - Feature-Felder werden NUR angezeigt wenn die Verbindung bereits getestet wurde
+
+## Widget-Only Keys (groessenabhaengige Sichtbarkeit)
+
+Feature-Fields mit bestimmten Keys werden NUR angezeigt, wenn die aktuell
+gewaehlte Tile-Groesse \`layout: "widget"\` in den renderHints hat:
+
+\`\`\`typescript
+const WIDGET_ONLY_KEYS = new Set(["carouselSpeed", "carouselItems"]);
+const currentHint = plugin.renderHints[currentSize];
+const isWidgetLayout = currentHint?.layout === "widget";
+
+// Feature-Fields werden zusaetzlich gefiltert:
+const featureFields = plugin.configFields
+  .filter((f) => !CONNECTION_KEYS.has(f.key) && !f.required && f.type !== "oauth")
+  .filter((f) => isWidgetLayout || !WIDGET_ONLY_KEYS.has(f.key));
+\`\`\`
+
+**Bedeutung fuer Plugin-Entwickler:**
+- Wenn ein User 1x1 waehlt (layout: "compact"): carouselSpeed und carouselItems sind **ausgeblendet**
+- Wenn ein User 2x1 oder 2x2 waehlt (layout: "widget"): Diese Felder erscheinen
+- Die **Tile-Groesse bestimmt welche Einstellungen relevant sind** — nicht nur die Pixel-Dimensionen
 
 ## Size-spezifische Hints
 
@@ -1196,7 +1221,6 @@ Die Hints helfen dem Benutzer die richtige Groesse zu waehlen.
 | \`"green"\`  | text-emerald-400 | Positiv, aktiv, online, niedrige Auslastung    |
 | \`"red"\`    | text-red-400     | Negativ, kritisch, offline, hohe Auslastung    |
 | \`"yellow"\` | text-yellow-400  | Warnung, mittlere Auslastung                  |
-| \`"blue"\`   | text-sky-400     | Information, Temperatur, neutral-hervorgehoben |
 | \`undefined\`| text-foreground  | Standard, neutral, Zaehler, Groessen           |
 
 ## Regeln
@@ -1219,8 +1243,8 @@ Die Hints helfen dem Benutzer die richtige Groesse zu waehlen.
 // Aktive Streams (gruen wenn > 0)
 { label: "Streams", value: 3, color: activeStreams > 0 ? "green" : undefined }
 
-// Temperatur (immer blau)
-{ label: "CPU Temp", value: 45, unit: "°C", color: "blue" }
+// Temperatur (keine spezielle Farbe — Standard-Textfarbe)
+{ label: "CPU Temp", value: 45, unit: "°C" }
 
 // Neutrale Zaehler (keine Farbe)
 { label: "Filme", value: 1234 }
@@ -1236,7 +1260,6 @@ function getStatColor(color?: string): string {
   if (color === "green") return "text-emerald-400";
   if (color === "red") return "text-red-400";
   if (color === "yellow") return "text-yellow-400";
-  if (color === "blue") return "text-sky-400";
   return "text-foreground";
 }
 
@@ -1244,7 +1267,6 @@ function getStatBgColor(color?: string): string {
   if (color === "green") return "bg-emerald-500/10";
   if (color === "red") return "bg-red-500/10";
   if (color === "yellow") return "bg-yellow-500/10";
-  if (color === "blue") return "bg-sky-500/10";
   return "bg-muted/20";
 }
 \`\`\`
@@ -1577,6 +1599,80 @@ onAction?.("refresh");  // Dashboard laedt Stats neu
 Das ist ein Signal, kein API-Call. Das Dashboard ruft dann \`fetchStats()\` erneut auf.
 `,
 
+  notificationPattern: `
+# Notification-Support (Optional)
+
+## Konzept
+
+Das Dashboard hat ein Notification Panel (rechte Seite, nur auf xl-Screens sichtbar).
+Plugins koennen \`supportsNotifications: true\` setzen, damit der User sie als
+Notification-Quelle einrichten kann.
+
+## Plugin-Seite: Nur ein Flag setzen
+
+\`\`\`typescript
+export const plugin: AppPlugin = {
+  metadata: { ... },
+  // ...
+  supportsNotifications: true,  // Das ist alles!
+};
+\`\`\`
+
+Das Plugin muss KEINE Notification-Logik implementieren. Es deklariert nur,
+dass der Service Notifications senden KANN. Die Einrichtung und Verwaltung
+der Notification-Quellen passiert im Dashboard unter **Einstellungen > Benachrichtigungen**.
+
+## Dashboard-Seite: Was passiert
+
+1. User geht zu **Einstellungen > Benachrichtigungen**
+2. Dashboard zeigt nur Plugins mit \`supportsNotifications: true\`
+3. User verknuepft eine bestehende AppConnection als Notification-Quelle
+4. Dashboard generiert einen **X-Notification-Key** (verschluesselter API Key)
+5. User konfiguriert seinen Service (z.B. Home Assistant Webhook) mit diesem Key
+
+## Notification API (fuer den externen Service)
+
+Der Service sendet Notifications an das Dashboard via:
+
+\`\`\`
+POST /api/notifications
+Headers:
+  X-Notification-Key: <generierter-api-key>
+  Content-Type: application/json
+
+Body:
+{
+  "title": "Neue Firmware verfuegbar",           // Pflicht, max 255 Zeichen
+  "message": "Version 2.5.0 mit Bugfixes...",    // Optional, max 2000 Zeichen
+  "category": "update",                          // "info" | "warning" | "critical" | "update"
+  "tag": "Firmware",                             // Optional: Freies Tag
+  "priority": 1,                                 // 0=niedrig, 1=normal, 2=hoch, 3=kritisch
+  "url": "https://release-notes.example.com",    // Optional: Link zum Oeffnen
+  "icon": "CircuitBoard",                        // Optional: SimpleIcons Slug
+  "expiresAt": "2026-05-01T00:00:00Z"            // Optional: Ablaufdatum (ISO)
+}
+\`\`\`
+
+## Kategorien und ihre Darstellung
+
+| Kategorie  | Farbe           | Animation              | Einsatz                        |
+|------------|-----------------|------------------------|--------------------------------|
+| \`info\`     | Weiss/neutral   | Keine                  | Allgemeine Infos, Status       |
+| \`warning\`  | Gelb            | Keine                  | Warnungen, Hinweise            |
+| \`critical\` | Rot             | Pulse-Animation        | Ausfaelle, kritische Fehler    |
+| \`update\`   | Blau            | Keine                  | Updates, neue Versionen        |
+
+## Rate Limiting
+
+- Pro Notification-Quelle konfigurierbar (Standard: Notifications/Stunde)
+- Bei Ueberschreitung: HTTP 429
+
+## Echtzeit-Delivery
+
+Notifications werden per SSE (Server-Sent Events) in Echtzeit an das Dashboard gepusht.
+Der User sieht sie sofort im Notification Panel ohne Seite neu zu laden.
+`,
+
   performanceRules: `
 # Performance-Regeln
 
@@ -1674,7 +1770,7 @@ const processedItems = stats.items.map(item => ({  // Laeuft bei jedem Render!
 - [ ] \`createErrorResponse(err)\` im catch-Block verwenden (Shared Utility)
 - [ ] \`Promise.all()\` fuer parallele Requests
 - [ ] Stats-Reihenfolge = Prioritaet (wichtigste zuerst)
-- [ ] Farben korrekt verwendet (green/red/yellow/blue Konventionen)
+- [ ] Farben korrekt verwendet (green/red/yellow Konventionen)
 - [ ] Alle Labels auf Deutsch
 
 ## 3. testConnection implementieren
@@ -1979,7 +2075,7 @@ try {
 
   const items = [];
   if (visibleStats.includes("storage")) {
-    items.push({ label: "Belegt", value: formatBytes(data.usedBytes), color: "blue" });
+    items.push({ label: "Belegt", value: formatBytes(data.usedBytes) });
   }
   if (visibleStats.includes("uptime")) {
     items.push({ label: "Uptime", value: formatUptime(data.uptimeSeconds), color: "green" });
