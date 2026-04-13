@@ -197,7 +197,7 @@ export function registerKnowledgeTools(server: McpServer): void {
   // ── get_notification_spec ─────────────────────────────────────────
   server.tool(
     "get_notification_spec",
-    "[Phase 1: Lernen] Returns notification system spec: supportsNotifications flag, NotificationPayload, categories, webhook API, SSE delivery. Only needed for plugins that can send notifications.",
+    "[Phase 1: Lernen] Returns notification system spec (v1.3.0-beta): supportsNotifications + notificationRules catalog, PluginNotificationRule shape, tag→rule-ID filter semantics, checkNotifications contract, enableAppNotifications / updateNotificationRules server actions, TileDialog opt-in flow, webhook alternative, categories, SSE delivery. Required reading for any plugin that wants to emit notifications — the API changed, no more auto-provisioning.",
     async () => {
       return success(PATTERNS.notificationPattern);
     },

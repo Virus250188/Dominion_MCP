@@ -2,9 +2,11 @@
 // Code patterns, anti-patterns, and implementation guidelines for Enhanced Apps.
 // Served to AI agents via MCP tools to guide correct plugin implementation.
 //
-// LAST_SYNCED: 2026-04-10
+// LAST_SYNCED: 2026-04-13
 // DASHBOARD_VERSION: 1.3.0-beta
-// SOURCE: Dashboard/src/plugins/types.ts, utils.ts, builtin/emby/index.ts
+// SOURCE: Dashboard/src/plugins/types.ts, utils.ts, builtin/emby/index.ts,
+//         src/lib/notifications/plugin-checker.ts, src/lib/actions/notifications.ts,
+//         src/components/dashboard/TileDialog.tsx, src/components/settings/NotificationSourceManager.tsx
 // ────────────────────────────────────────────────────────────────────────────
 
 export const PATTERNS = {
@@ -79,10 +81,12 @@ export const plugin: AppPlugin = {
     accessToken: string; refreshToken?: string; expiresAt?: number;
   }> { ... },
 
-  // Optional: Notification-Support
-  supportsNotifications?: boolean,  // true = Plugin kann als Notification-Quelle dienen
+  // Optional: Notification-Support (beide Felder zusammen noetig!)
+  supportsNotifications?: boolean,  // true = Plugin kann Notifications ausloesen
+  notificationRules?: PluginNotificationRule[],  // Katalog aller Rules die das Plugin anbietet
 
-  // Optional: Plugin-originated Notifications (empfohlen wenn supportsNotifications: true)
+  // Optional: Plugin-originated Notifications (nur aktiv wenn der User die Source via
+  // TileDialog-Toggle explizit erstellt hat UND die jeweilige Rule eingeschaltet ist)
   async checkNotifications?(
     config: PluginConfig,
     currentData: Record<string, unknown>,      // Aktuelles widgetData aus fetchStats
@@ -176,7 +180,19 @@ interface CrawlEntityGroup {
 }
 \`\`\`
 
-### PluginNotification (fuer checkNotifications)
+### PluginNotificationRule (fuer notificationRules-Katalog)
+\`\`\`typescript
+interface PluginNotificationRule {
+  id: string;              // Rule-ID — MUSS mit PluginNotification.tag uebereinstimmen
+                           //   (z.B. "interface_down", "disk_full", "array_stopped")
+  label: string;           // Angezeigter Name im Settings-Picker (Deutsch)
+  description: string;     // Hilfetext unter der Checkbox (Deutsch)
+  severity: "info" | "warning" | "critical";
+  defaultEnabled: boolean; // Default beim Erstellen der NotificationSource
+}
+\`\`\`
+
+### PluginNotification (Rueckgabewert von checkNotifications)
 \`\`\`typescript
 interface PluginNotification {
   dedupKey: string;        // Eindeutiger Dedup-Key (z.B. "container-stopped-abc123")
@@ -184,7 +200,10 @@ interface PluginNotification {
   message?: string;        // Body-Text (max 2000 Zeichen)
   category: "info" | "warning" | "critical" | "update";
   priority?: number;       // 0-3, default 1
-  tag?: string;            // Gruppierung (z.B. "Docker", "Array", "Disk")
+  tag?: string;            // PFLICHT fuer Plugin-Notifications: MUSS exakt der id einer
+                           //   PluginNotificationRule entsprechen. Notifications ohne tag
+                           //   oder mit unbekanntem tag werden vom Framework SILENT gedropped
+                           //   (runNotificationCheck rule-filter in plugin-checker.ts).
   url?: string;            // Link zum Oeffnen bei Klick
   dedupMinutes?: number;   // Unterdrueckung gleicher dedupKey fuer N Minuten (default: 60)
 }
@@ -1684,25 +1703,69 @@ Das ist ein Signal, kein API-Call. Das Dashboard ruft dann \`fetchStats()\` erne
   notificationPattern: `
 # Notification-Support (Optional)
 
-## Konzept
+## Konzept (v1.3.0-beta)
 
-Das Dashboard hat ein Notification Panel (rechte Seite). Plugins mit
-\`supportsNotifications: true\` koennen Notifications ausloesen.
+Das Dashboard hat ein Notification Panel (rechte Seite). Plugins koennen
+Notifications ausloesen, **aber nur** wenn der User die Notification-Quelle
+vorher explizit ueber den TileDialog-Toggle erstellt hat und die jeweilige
+Rule aktiviert ist.
 
-Es gibt zwei Ansaetze:
+**Drei-Schichten-Kontrakt:**
+1. **Plugin deklariert:** \`supportsNotifications: true\` + \`notificationRules: PluginNotificationRule[]\`
+   (Katalog aller Rules mit id, label, description, severity, defaultEnabled).
+2. **User aktiviert:** TileDialog "Benachrichtigungen aktivieren"-Toggle beim
+   Erstellen einer neuen AppConnection → ruft \`enableAppNotifications(connectionId)\`.
+   Settings-Seite zeigt pro Source einen Rule-Picker → ruft \`updateNotificationRules(sourceId, enabledRules)\`.
+3. **Framework filtert:** \`runNotificationCheck\` verwirft alle Notifications
+   deren \`tag\` nicht in \`source.ruleConfig.enabledRules\` steht — STILL und ohne Fehler.
+
+**Wichtig:** NotificationSources werden **nicht mehr auto-provisioniert**. Ohne
+expliziten User-Opt-in laeuft \`checkNotifications\` zwar, aber das Framework
+findet keine passende Source und dropped ALLES.
+
+Es gibt zwei Trigger-Arten:
 1. **Plugin-originated (empfohlen):** Plugin implementiert \`checkNotifications()\` —
-   erkennt Zustandsaenderungen automatisch beim Polling
-2. **Webhook:** Externer Service pushed Notifications via HTTP POST
+   erkennt Zustandsaenderungen automatisch beim Polling. Braucht \`notificationRules\`.
+2. **Webhook:** Externer Service pushed Notifications via HTTP POST \`/api/notifications\`.
+   Geht direkt in die DB, ohne Rule-Filter.
 
 ## 12.1 Plugin-Originated Notifications (checkNotifications) — EMPFOHLEN
 
 Das Dashboard ruft \`checkNotifications()\` nach jedem \`fetchStats\` Poll auf
-und uebergibt das aktuelle und vorherige \`widgetData\` zum Vergleich.
+und uebergibt das aktuelle und vorherige \`widgetData\` zum Vergleich. Jede
+zurueckgegebene Notification muss ein \`tag\` haben, das einer Rule-ID aus
+\`notificationRules\` entspricht — sonst wird sie silent verworfen.
 
 \`\`\`typescript
 export const plugin: AppPlugin = {
   metadata: { ... },
   supportsNotifications: true,
+
+  // Katalog aller Rules die das Plugin anbietet. Die UI zeigt diese Rules im
+  // Settings-Picker. Der tag der emittierten Notifications MUSS mit einer id hier matchen.
+  notificationRules: [
+    {
+      id: "array_stopped",
+      label: "Array gestoppt",
+      description: "Feuert wenn das Unraid Array unerwartet gestoppt wird.",
+      severity: "critical",
+      defaultEnabled: true,
+    },
+    {
+      id: "disk_full",
+      label: "Disk voll",
+      description: "Feuert wenn eine Disk > 95% belegt ist.",
+      severity: "warning",
+      defaultEnabled: true,
+    },
+    {
+      id: "container_stopped",
+      label: "Container gestoppt",
+      description: "Feuert wenn ein ueberwachter Container stoppt.",
+      severity: "info",
+      defaultEnabled: false,
+    },
+  ],
 
   async checkNotifications(config, currentData, previousData) {
     const notifications: PluginNotification[] = [];
@@ -1710,7 +1773,7 @@ export const plugin: AppPlugin = {
     // previousData ist null beim ersten Poll (oder nach Server-Restart)!
     if (!previousData) return notifications;
 
-    // Beispiel: Zustandsaenderung erkennen
+    // Beispiel: Zustandsaenderung erkennen. tag MUSS mit einer Rule-ID oben matchen.
     const prevStatus = previousData.arrayStatus as string;
     const currStatus = currentData.arrayStatus as string;
     if (prevStatus === "Started" && currStatus === "Stopped") {
@@ -1719,7 +1782,7 @@ export const plugin: AppPlugin = {
         title: "Array gestoppt",
         message: "Das Unraid Array wurde gestoppt.",
         category: "critical",
-        tag: "Array",
+        tag: "array_stopped",  // ← MUSS notificationRules[].id matchen!
       });
     }
 
@@ -1742,14 +1805,25 @@ export const plugin: AppPlugin = {
 };
 \`\`\`
 
-### Wie es funktioniert
+### Wie es funktioniert (End-to-End)
 
-1. Dashboard pollt \`fetchStats\` → erhaelt \`{ items, status, widgetData }\`
-2. Wenn \`supportsNotifications: true\` UND \`checkNotifications\` existiert:
-   - System uebergibt \`currentData\` (aktuelles widgetData) und \`previousData\` (vom letzten Poll)
-   - Plugin vergleicht und gibt Array von \`PluginNotification\` zurueck
-3. System handhabt Dedup, Speicherung und SSE-Broadcast automatisch
-4. \`NotificationSource\` (type: "plugin") wird beim ersten Check automatisch erstellt
+1. **User erstellt AppConnection** ueber TileDialog. Wenn das Plugin
+   \`supportsNotifications: true\` UND mindestens eine \`notificationRules\`-Entry hat
+   UND es fuer diese Connection noch keine NotificationSource gibt, erscheint
+   ein "Benachrichtigungen aktivieren"-Toggle unter dem Enhanced-Toggle.
+2. **User klickt Toggle + Save.** Handler ruft \`enableAppNotifications(newConn.id)\`
+   (Server Action in \`src/lib/actions/notifications.ts\`). Diese Action legt
+   einen \`NotificationSource\` an mit \`sourceId = "plugin-{pluginType}-{connId}"\`,
+   \`type: "plugin"\` und \`ruleConfig = { enabledRules: [alle Rules mit defaultEnabled: true] }\`.
+3. **Dashboard pollt \`fetchStats\`** → erhaelt \`{ items, status, widgetData }\`.
+4. **Plugin-checker ruft \`checkNotifications\`** mit currentData + previousData.
+   Plugin gibt \`PluginNotification[]\` zurueck.
+5. **Framework filtert:** \`runNotificationCheck\` liest \`source.ruleConfig.enabledRules\`
+   und verwirft alle Notifications deren \`tag\` nicht im Set steht. Notifications
+   ohne \`tag\` werden ebenfalls verworfen.
+6. **Dedup + SSE-Broadcast** fuer die uebrig gebliebenen Notifications.
+7. **User kann Rules nachtraeglich andern** auf \`/settings/notifications\` — der
+   expandable Rule-Picker pro Source triggert \`updateNotificationRules(sourceId, enabledRules)\`.
 
 ### dedupKey-Strategie
 
@@ -1766,14 +1840,27 @@ erneut ausgeloest, es sei denn der User hat die vorherige bestaetigt.
 
 - **\`previousData\` ist null** beim ersten Poll nach Server-Start. Immer mit
   \`if (!previousData) return []\` behandeln — niemals beim ersten Poll feuern!
+- **\`tag\` ist PFLICHT** fuer plugin-originated Notifications — ohne oder mit
+  unbekanntem tag wird silent gedropped. Der tag MUSS exakt einer Rule-ID
+  aus \`notificationRules\` entsprechen (case-sensitive).
+- **Rules-Katalog stabil halten:** Eine Rule-ID umzubenennen bricht bestehende
+  User-Konfigurationen (ruleConfig in der DB referenziert die alte ID). Neue
+  Rules hinzufuegen ist OK, Rules umbenennen ist breaking.
 - **Fire-and-forget:** checkNotifications laeuft async, Fehler blockieren NICHT den Stats-Return
 - **Throttled:** Max 1x pro 30 Sekunden pro Tile (auch bei mehreren Browser-Tabs)
 - **widgetData designen fuer Vergleiche:** Die Daten die checkNotifications braucht,
   MUESSEN in \`widgetData\` von \`fetchStats\` enthalten sein
+- **Ohne NotificationSource = nichts passiert:** Wenn der User den TileDialog-Toggle
+  nicht aktiviert hat, laeuft checkNotifications ins Leere — der plugin-checker
+  findet keine Source und verwirft alle Rueckgaben.
 
 ## 12.2 Webhook Notifications (Externer Push)
 
-Fuer Services die selbst HTTP-Requests senden koennen (z.B. Home Assistant Webhooks):
+Fuer Services die selbst HTTP-Requests senden koennen (z.B. Home Assistant Webhooks).
+**Hinweis:** Webhook-Notifications gehen direkt an die DB und umgehen den
+\`ruleConfig\`-Filter — sie sind nicht an \`notificationRules\` gebunden. Eine
+Webhook-NotificationSource wird separat in den Settings unter "Neue Quelle"
+angelegt und bekommt ihren eigenen API Key.
 
 \`\`\`
 POST /api/notifications
@@ -1941,16 +2028,23 @@ const processedItems = stats.items.map(item => ({  // Laeuft bei jedem Render!
 - [ ] Deutsche Labels fuer Gruppen
 - [ ] Dual-Format Support in fetchStats (\`selectedEntities\` + \`entityIds\`)
 
-## 6. Optional: checkNotifications (Plugin-originated Notifications)
+## 6. Optional: Notifications (notificationRules + checkNotifications)
 
 - [ ] \`supportsNotifications: true\` gesetzt
+- [ ] \`notificationRules: PluginNotificationRule[]\` deklariert (mindestens 1 Rule)
+- [ ] Jede Rule hat id (snake_case), label (Deutsch), description (Deutsch),
+      severity ("info"|"warning"|"critical"), defaultEnabled
+- [ ] Rule-IDs sind STABIL — Umbenennen bricht bestehende ruleConfig in der DB
 - [ ] \`checkNotifications(config, currentData, previousData)\` implementiert
+- [ ] Jede erzeugte Notification hat einen \`tag\` der EXAKT einer Rule-ID entspricht
+      (case-sensitive) — sonst wird sie vom Framework silent gedropped
 - [ ] \`previousData === null\` wird behandelt (erster Poll → leeres Array zurueck)
 - [ ] widgetData in fetchStats enthaelt ALLE Daten die fuer Vergleiche noetig sind
 - [ ] dedupKey-Strategie gewaehlt (state-based / instance-based / threshold-based)
-- [ ] Sinnvolle Kategorien: "critical" fuer Ausfaelle, "warning" fuer Schwellenwerte
 - [ ] Deutsche Notification-Titel und -Messages
 - [ ] Keine Notification beim ersten Poll (previousData=null Guard)
+- [ ] Verstanden: Ohne User-Opt-in im TileDialog-Toggle wird checkNotifications
+      zwar aufgerufen, aber es existiert keine NotificationSource und alles dropt
 
 ## 7. Optional: Widget-Komponente
 

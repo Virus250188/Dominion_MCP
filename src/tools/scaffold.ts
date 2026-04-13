@@ -299,15 +299,35 @@ function generatePluginCode(params: {
 
   supportsNotifications: true,
 
+  // Katalog aller Rules die das Plugin anbietet. Die UI zeigt diese Rules im
+  // Settings-Picker (Einstellungen > Benachrichtigungen). Der tag einer
+  // PluginNotification MUSS exakt einer Rule-ID hier entsprechen — sonst
+  // wird die Notification vom Framework silent verworfen.
+  // WICHTIG: Rule-IDs sind STABIL — Umbenennen bricht bestehende User-Konfigs.
+  notificationRules: [
+    {
+      id: "service_offline",
+      label: "Service ist offline",
+      description: "Feuert wenn der Service nicht mehr erreichbar ist.",
+      severity: "critical",
+      defaultEnabled: true,
+    },
+    // TODO: Weitere Rules hier ergaenzen. Jede Rule entspricht einem
+    // erkennbaren Zustand den das Plugin in checkNotifications beobachtet.
+  ],
+
   // Plugin-originated Notifications: Wird nach jedem fetchStats-Poll aufgerufen.
   // currentData = aktuelles widgetData, previousData = vorheriges (null beim ersten Poll!)
+  // Hinweis: Ohne User-Opt-in im TileDialog-Toggle existiert keine NotificationSource
+  // und alle Rueckgaben werden vom plugin-checker verworfen.
   async checkNotifications(config: PluginConfig, currentData: Record<string, unknown>, previousData: Record<string, unknown> | null) {
     const notifications: import("../../types").PluginNotification[] = [];
 
     // WICHTIG: Beim ersten Poll (previousData=null) niemals feuern!
     if (!previousData) return notifications;
 
-    // TODO: Zustandsaenderungen erkennen und Notifications erzeugen
+    // TODO: Zustandsaenderungen erkennen und Notifications erzeugen.
+    // Der tag MUSS einer Rule-ID aus notificationRules oben entsprechen.
     // Beispiel:
     // const prevStatus = previousData.someStatus as string;
     // const currStatus = currentData.someStatus as string;
@@ -316,7 +336,7 @@ function generatePluginCode(params: {
     //     dedupKey: "service-offline",
     //     title: "Service ist offline",
     //     category: "critical",
-    //     tag: "System",
+    //     tag: "service_offline",  // ← muss notificationRules[].id matchen!
     //   });
     // }
 
@@ -759,7 +779,7 @@ export function registerScaffoldTools(server: McpServer): void {
       hasNotifications: z
         .boolean()
         .describe(
-          "Whether this plugin detects state changes and sends notifications (generates checkNotifications skeleton)",
+          "Whether this plugin detects state changes and sends notifications (generates notificationRules catalog + checkNotifications skeleton). Requires the user to enable notifications for the connection via the TileDialog toggle before anything is delivered.",
         ),
     },
     async (params) => {

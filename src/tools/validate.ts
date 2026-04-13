@@ -474,6 +474,116 @@ function validatePlugin(params: {
     }
   }
 
+  // ── 26-30. Notification System (v1.3.0-beta contract) ──────────────
+
+  const hasSupportsNotifications = /supportsNotifications\s*:\s*true/.test(pluginCode);
+  const notificationRulesMatch = pluginCode.match(/notificationRules\s*:\s*\[/);
+  const hasNotificationRules = !!notificationRulesMatch;
+  const hasCheckNotifications = /(?:async\s+)?checkNotifications\s*[\(:]/.test(pluginCode);
+
+  // 26. supportsNotifications without notificationRules
+  if (hasSupportsNotifications && !hasNotificationRules) {
+    errors.push(err(
+      "Plugin hat supportsNotifications: true aber kein notificationRules Array.",
+      `Seit Dashboard v1.3.0-beta muessen beide Felder zusammen gesetzt sein. Ohne notificationRules erscheint der TileDialog-Toggle nicht und der User kann keine Notifications aktivieren.\nBeispiel:\nnotificationRules: [\n  {\n    id: "service_offline",\n    label: "Service offline",\n    description: "Feuert wenn der Service nicht erreichbar ist.",\n    severity: "critical",\n    defaultEnabled: true,\n  },\n],`,
+    ));
+  }
+
+  // 27. notificationRules without supportsNotifications
+  if (hasNotificationRules && !hasSupportsNotifications) {
+    errors.push(err(
+      "Plugin hat notificationRules aber supportsNotifications ist nicht true.",
+      `Setze \`supportsNotifications: true\`. Der TileDialog-Toggle gated auf beide Flags zusammen.`,
+    ));
+  }
+
+  // 28. notificationRules without checkNotifications
+  if (hasNotificationRules && !hasCheckNotifications) {
+    warnings.push(warn(
+      "Plugin deklariert notificationRules aber implementiert kein checkNotifications.",
+      `Ohne checkNotifications werden keine plugin-originated Notifications erzeugt.\nImplementiere: async checkNotifications(config, currentData, previousData): Promise<PluginNotification[]> { ... }`,
+    ));
+  }
+
+  // 29. checkNotifications without notificationRules
+  if (hasCheckNotifications && !hasNotificationRules) {
+    errors.push(err(
+      "Plugin implementiert checkNotifications aber hat kein notificationRules Array.",
+      `Seit v1.3.0-beta verwirft das Framework alle Notifications deren tag keiner Rule-ID entspricht. Ohne notificationRules ist die Rule-ID-Menge leer — ALLES wird gedropped.\nDeklariere notificationRules: PluginNotificationRule[] mit allen moeglichen Zustaenden die checkNotifications erkennt.`,
+    ));
+  }
+
+  // 30. Tag/Rule-ID consistency + severity check (only if both are present)
+  if (hasNotificationRules && notificationRulesMatch) {
+    const bracketStart = notificationRulesMatch.index! + notificationRulesMatch[0].length - 1; // position of '['
+    let depth = 0;
+    let bracketEnd = bracketStart;
+    for (let i = bracketStart; i < pluginCode.length; i++) {
+      if (pluginCode[i] === "[") depth++;
+      else if (pluginCode[i] === "]") {
+        depth--;
+        if (depth === 0) { bracketEnd = i; break; }
+      }
+    }
+    const rulesBlock = pluginCode.slice(bracketStart, bracketEnd + 1);
+
+    const ruleIds = new Set<string>();
+    for (const m of rulesBlock.matchAll(/\bid\s*:\s*["']([^"']+)["']/g)) {
+      ruleIds.add(m[1]);
+    }
+
+    if (ruleIds.size === 0) {
+      errors.push(err(
+        "notificationRules ist leer oder enthaelt keine gueltigen Rule-Objekte.",
+        `Deklariere mindestens eine Rule mit { id, label, description, severity, defaultEnabled }. Ein leeres Array verhindert dass der TileDialog-Toggle erscheint.`,
+      ));
+    }
+
+    // Severity whitelist check
+    for (const m of rulesBlock.matchAll(/\bseverity\s*:\s*["']([^"']+)["']/g)) {
+      if (!["info", "warning", "critical"].includes(m[1])) {
+        errors.push(err(
+          `notificationRules: severity "${m[1]}" ist ungueltig.`,
+          `Erlaubt sind nur: "info" | "warning" | "critical". PluginNotification.category kennt zusaetzlich "update", aber die PluginNotificationRule-Severity nicht.`,
+        ));
+      }
+    }
+
+    // Tag consistency check — walk every notifications.push(...) call in checkNotifications
+    if (hasCheckNotifications && ruleIds.size > 0) {
+      const checkBody = extractFunctionBody(pluginCode, "checkNotifications");
+      if (checkBody) {
+        const pushRegex = /notifications\s*\.\s*push\s*\(/g;
+        let pushMatch: RegExpExecArray | null;
+        while ((pushMatch = pushRegex.exec(checkBody)) !== null) {
+          const argStart = pushMatch.index + pushMatch[0].length;
+          let parenDepth = 1;
+          let argEnd = argStart;
+          for (let i = argStart; i < checkBody.length; i++) {
+            if (checkBody[i] === "(") parenDepth++;
+            else if (checkBody[i] === ")") {
+              parenDepth--;
+              if (parenDepth === 0) { argEnd = i; break; }
+            }
+          }
+          const arg = checkBody.slice(argStart, argEnd);
+          const tagMatch = arg.match(/\btag\s*:\s*["']([^"']+)["']/);
+          if (!tagMatch) {
+            warnings.push(warn(
+              "notifications.push(...) ohne tag-Feld — das Framework verwirft Notifications ohne tag silent.",
+              `Jede plugin-originated Notification MUSS einen tag haben der exakt einer notificationRules[].id entspricht.\nBekannte Rule-IDs: ${[...ruleIds].join(", ")}`,
+            ));
+          } else if (!ruleIds.has(tagMatch[1])) {
+            errors.push(err(
+              `checkNotifications benutzt tag: "${tagMatch[1]}" — diese ID existiert nicht in notificationRules.`,
+              `Notifications mit unbekanntem tag werden vom Framework (runNotificationCheck) silent verworfen.\nBekannte Rule-IDs: ${[...ruleIds].join(", ")}\nEntweder den tag auf eine existierende Rule-ID aendern oder eine neue Rule in notificationRules ergaenzen.`,
+            ));
+          }
+        }
+      }
+    }
+  }
+
   // ── Widget Validation (merged from test_plugin_completeness) ────────
 
   if (widgetCode) {
@@ -731,7 +841,7 @@ function validateRenderHints(renderHintsJson: string, supportedSizes: string[]):
 export function registerValidationTools(server: McpServer): void {
   server.tool(
     "validate_plugin",
-    "[Phase 4: Validieren] Validates plugin code, manifest, and widget against 20+ framework rules. Returns errors with fix suggestions. Call BEFORE create_plugin_zip.",
+    "[Phase 4: Validieren] Validates plugin code, manifest, and widget against 30+ framework rules. Covers: types/exports, manifest, fetchStats shape, crawlEntities, feature-field visibility, notification system (supportsNotifications + notificationRules + checkNotifications + tag/rule-ID consistency), widget basics. Returns errors with fix suggestions. Call BEFORE create_plugin_zip.",
     {
       pluginCode: z.string().describe("The full TypeScript source code of the plugin (index.ts)."),
       pluginId: z.string().optional().describe("Plugin ID in kebab-case. If provided, checks manifest ID match."),

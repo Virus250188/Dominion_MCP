@@ -2,9 +2,11 @@
 // Complete documentation of the Dominion Dashboard Enhanced App system.
 // Served to AI agents via MCP tools to guide plugin development.
 //
-// LAST_SYNCED: 2026-04-10
+// LAST_SYNCED: 2026-04-13
 // DASHBOARD_VERSION: 1.3.0-beta
-// SOURCE: Dashboard/src/plugins/types.ts, registry.ts, utils.ts, validator.ts
+// SOURCE: Dashboard/src/plugins/types.ts, registry.ts, utils.ts, validator.ts,
+//         src/lib/notifications/plugin-checker.ts, src/lib/actions/notifications.ts,
+//         src/components/dashboard/TileDialog.tsx
 // ────────────────────────────────────────────────────────────────────────────
 
 export const FRAMEWORK = {
@@ -111,11 +113,19 @@ entweder in \`src/plugins/community/\` ablegen ODER ueber
   Beispiel: Das Emby Plugin liefert \`widgetData: { recentItems, mediaCategory,
   carouselSpeed, carouselItems }\` fuer ein Medien-Karussell im Widget.
 
-- **Notification-System:** Das Dashboard hat ein Notification Panel (rechte Seite).
-  Plugins mit \`supportsNotifications: true\` koennen Notifications ausloesen.
+- **Notification-System (v1.3.0-beta):** Das Dashboard hat ein Notification Panel (rechte Seite).
+  Plugins deklarieren sowohl \`supportsNotifications: true\` als auch
+  \`notificationRules: PluginNotificationRule[]\` (Katalog aller Rules die das Plugin anbietet).
   **Empfohlen:** Plugin implementiert \`checkNotifications(config, currentData, previousData)\`
-  — wird nach jedem fetchStats-Poll aufgerufen, erkennt Zustandsaenderungen automatisch.
-  **Alternativ:** Externer Webhook via \`POST /api/notifications\` mit \`X-Notification-Key\`.
+  — wird nach jedem fetchStats-Poll aufgerufen. Jede zurueckgegebene Notification MUSS
+  ein \`tag\` haben das exakt einer Rule-ID entspricht — sonst wird sie vom Framework
+  silent verworfen. **Kein Auto-Provisioning mehr:** Der User muss im TileDialog einen
+  "Benachrichtigungen aktivieren"-Toggle klicken (ruft \`enableAppNotifications(connId)\`),
+  sonst existiert keine NotificationSource und alle Rueckgaben werden gedropped.
+  Ueber die Settings-Seite kann der User einzelne Rules per Picker aktivieren/deaktivieren
+  (\`updateNotificationRules(sourceId, enabledRules)\`).
+  **Alternativ:** Externer Webhook via \`POST /api/notifications\` mit \`X-Notification-Key\`
+  — geht direkt in die DB, ohne Rule-Filter.
   Kategorien: \`"info"\` | \`"warning"\` | \`"critical"\` | \`"update"\`.
   Notifications werden per SSE in Echtzeit an das Dashboard gepusht.
 
@@ -565,16 +575,25 @@ selectedEntities, etc.). Das bedeutet:
 - \`id\` muss mit \`metadata.id\` und dem Ordnernamen uebereinstimmen
 - Pflicht fuer ZIP-Upload, empfohlen fuer manuell platzierte Plugins
 
-### 14. Optional: Notification-Support (\`supportsNotifications\` + \`checkNotifications\`)
-- Setze \`supportsNotifications: true\` um Notifications zu aktivieren
+### 14. Optional: Notification-Support (\`supportsNotifications\` + \`notificationRules\` + \`checkNotifications\`)
+- Setze \`supportsNotifications: true\` UND deklariere \`notificationRules: PluginNotificationRule[]\`
+  (beide zusammen — der TileDialog-Toggle erscheint nur wenn beide vorhanden sind)
+- Jede Rule = \`{ id, label, description, severity: "info"|"warning"|"critical", defaultEnabled }\`
+- **Rule-IDs stabil halten:** Umbenennen bricht bestehende \`ruleConfig.enabledRules\` in der DB
 - **Empfohlen:** Implementiere \`checkNotifications(config, currentData, previousData)\`
   — erkennt Zustandsaenderungen automatisch beim Polling (z.B. Container gestoppt, Disk voll)
-  — gibt \`PluginNotification[]\` zurueck mit dedupKey, title, category, tag
+  — gibt \`PluginNotification[]\` zurueck mit dedupKey, title, category, **tag**
+  — \`tag\` MUSS exakt einer Rule-ID entsprechen — Notifications ohne tag oder mit
+    unbekanntem tag werden vom Framework silent gedropped (runNotificationCheck-Filter)
   — \`previousData\` ist null beim ersten Poll → immer mit leerem Array behandeln!
   — widgetData aus fetchStats MUSS die Daten enthalten die fuer Vergleiche noetig sind
+- **Kein Auto-Provisioning:** NotificationSources werden NICHT automatisch erstellt.
+  User muss TileDialog-Toggle beim Erstellen der Connection klicken → \`enableAppNotifications(connId)\`.
+  Ohne Source laeuft checkNotifications ins Leere.
 - **Alternativ:** Webhook — externer Service sendet via \`POST /api/notifications\` mit \`X-Notification-Key\`
+  (geht direkt in die DB, ohne Rule-Filter — separate NotificationSource unter Settings > Neue Quelle)
 - Kategorien: \`"info"\` (neutral), \`"warning"\` (gelb), \`"critical"\` (rot, Pulse-Animation), \`"update"\` (blau)
-- System handhabt: Dedup (via dedupKey + Zeitfenster), NotificationSource Auto-Provisioning,
+- System handhabt: Rule-Filter nach \`source.ruleConfig.enabledRules\`, Dedup (via dedupKey + Zeitfenster),
   SSE-Broadcast, Throttling (max 1x/30s pro Tile)
 
 ### 15. Optional: OAuth (\`exchangeToken\` + \`refreshToken\`)
