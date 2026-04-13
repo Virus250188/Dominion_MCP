@@ -6,9 +6,9 @@ An MCP (Model Context Protocol) server that helps AI agents develop Enhanced App
 
 This MCP server acts as a **complete knowledge base and toolkit** for AI coding assistants. When connected, the agent can build a production-ready plugin **without ever needing access to the Dashboard source code** -- the result is a ZIP file ready for upload.
 
-- **Knowledge Tools** -- Framework architecture, tile specs, data contracts, widget patterns, notification system, shared utilities & components source code
+- **Knowledge Tools** -- Framework architecture, tile specs, data contracts, widget patterns, rule-based notification system, shared utilities & components source code
 - **Scaffold Tools** -- Generate complete plugin code, widget components, manifests, and READMEs
-- **Validation Tools** -- Validate plugin structure, stats output, and render hints against 20+ rules
+- **Validation Tools** -- Validate plugin structure, stats output, and render hints against 30+ rules (incl. notification rule/tag consistency)
 - **Test Tools** -- Standalone TypeScript syntax checks (no Dashboard access needed)
 - **Package Tools** -- Create ready-to-upload ZIP files
 - **Preview Tools** -- Generate HTML tile previews in the Dashboard's glass theme
@@ -92,7 +92,7 @@ The agent will:
 | `get_data_contracts` | TypeScript interfaces, fetchStats patterns, color conventions |
 | `get_widget_contract` | Widget props, WidgetHeader, registration, Widget-Actions pattern |
 | `get_entity_crawler_spec` | CrawlEntityGroup interface, entity picker flow |
-| `get_notification_spec` | Notification system: supportsNotifications, webhook API, categories |
+| `get_notification_spec` | Rule-based notification system: notificationRules catalog, tag→rule-ID filter, checkNotifications contract, enableAppNotifications opt-in, webhook alternative |
 | `get_performance_guidelines` | Performance rules, anti-patterns, timeouts |
 | `get_implementation_checklist` | Complete checklist for plugin development |
 | `get_hello_world_example` | Complete minimal plugin example with manifest + code |
@@ -113,7 +113,7 @@ The agent will:
 
 | Tool | Description |
 |------|-------------|
-| `validate_plugin` | Static analysis of plugin code, manifest, and widget (25+ checks with fix suggestions) |
+| `validate_plugin` | Static analysis of plugin code, manifest, and widget (30+ checks with fix suggestions, incl. notification rule/tag consistency) |
 | `validate_stats_output` | Validate PluginStats JSON against schema (items, colors, status) |
 | `validate_render_hints` | Validate renderHints for completeness, layout-per-size rules, widget consistency |
 
@@ -152,7 +152,7 @@ my-plugin/
 - **Auth Methods**: API Key, Username/Password, OAuth (framework-managed flow)
 - **Widget Components**: Custom React components with WidgetHeader, shared UI components
 - **Entity Crawling**: For services with selectable entities (smart home, containers)
-- **Notifications**: Plugins can declare `supportsNotifications: true` to enable webhook-based notifications (info, warning, critical, update)
+- **Notifications**: Rule-based notification system. Plugins declare `supportsNotifications: true` + a `notificationRules` catalog, and implement `checkNotifications()` to detect state changes at poll time. Each emitted notification's `tag` must match a rule ID — the framework filters by the user's per-source `ruleConfig.enabledRules` (unknown tags are silently dropped). Users opt in explicitly via the TileDialog "enable notifications" toggle — no auto-provisioning. Webhook-based notifications are supported as a separate source type.
 - **ZIP Upload**: Package and upload plugins via Dashboard Settings > Plugins > Upload
 - **Auto-Discovery**: Drop plugin folder + restart -- no core files to edit
 
@@ -179,7 +179,7 @@ Works with Docker, bare metal, and local development -- no special handling need
 
 ```
 src/
-  index.ts                # Server entry point (v2.2.0)
+  index.ts                # Server entry point (v2.3.1)
   data/
     framework.ts          # Core architecture, lifecycle, API endpoints, notifications
     patterns.ts           # Code patterns, notifications, shared utilities, anti-patterns
@@ -188,7 +188,7 @@ src/
   tools/
     knowledge.ts          # 15 knowledge retrieval tools
     scaffold.ts           # 4 code generation tools
-    validate.ts           # 3 validation tools (25+ checks)
+    validate.ts           # 3 validation tools (30+ checks)
     test.ts               # 1 standalone testing tool
     package.ts            # 1 ZIP packaging tool
     preview.ts            # 1 HTML preview tool
@@ -210,7 +210,7 @@ npm start
 
 ## Knowledge Sync
 
-The hardcoded knowledge in `src/data/` is synced against the Dashboard source code. Each file has a `LAST_SYNCED` timestamp. Current sync: **2026-04-10** (Dashboard v1.0.7-alpha).
+The hardcoded knowledge in `src/data/` is synced against the Dashboard source code. Each file has a `LAST_SYNCED` timestamp. Current sync: **2026-04-13** (Dashboard v1.3.0-beta — rule-based notification API).
 
 ## Related Projects
 
