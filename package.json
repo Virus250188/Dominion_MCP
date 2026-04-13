@@ -1,6 +1,6 @@
 {
   "name": "dominion-enhanced-mcp",
-  "version": "2.2.0",
+  "version": "2.3.0",
   "description": "MCP Server to help AI agents develop Enhanced Apps for the Dominion Dashboard",
   "type": "module",
   "main": "dist/index.js",

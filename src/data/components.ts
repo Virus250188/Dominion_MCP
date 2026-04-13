@@ -3,8 +3,8 @@
 // Agents can reference these to understand props and rendering behavior.
 // Imports like @/components/widgets/shared/... resolve in the Dashboard.
 //
-// LAST_SYNCED: 2026-04-06
-// DASHBOARD_VERSION: 1.0.7-alpha
+// LAST_SYNCED: 2026-04-10
+// DASHBOARD_VERSION: 1.3.0-beta
 // SOURCE: Dashboard/src/components/widgets/shared/*.tsx, registry.ts
 // ────────────────────────────────────────────────────────────────────────────
 

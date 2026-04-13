@@ -3,7 +3,7 @@
 // Served to AI agents via MCP tools to guide plugin rendering decisions.
 //
 // LAST_SYNCED: 2026-04-10
-// DASHBOARD_VERSION: 1.0.7-alpha
+// DASHBOARD_VERSION: 1.3.0-beta
 // SOURCE: Dashboard/src/components/dashboard/EnhancedTile.tsx, TileDialog.tsx
 // ────────────────────────────────────────────────────────────────────────────
 
@@ -27,6 +27,7 @@ export const TILE_SPECS = {
 | Max Stats         | 3 (sichtbar)        | 6                      | 6                        |
 | Layout            | compact             | detailed ODER widget   | widget ODER detailed     |
 | Widget-Support    | Nein                | Optional               | Ja (empfohlen)           |
+| Konfiguration     | statOptions Checkboxen | configFields (Gauges, Info) | configFields (Slots, Filter) |
 | Anwendungsfall    | Einfache Metriken   | Mehr Daten / Mini-Vis  | Komplexe Visualisierung  |
 
 ### Wichtige Regeln:
@@ -46,6 +47,17 @@ export const TILE_SPECS = {
 | \`["1x1", "2x1"]\`       | 2 Optionen                | Stats-Erweiterung, kein Widget noetig |
 | \`["1x1", "2x1", "2x2"]\`| 3 Optionen                | Volle Widget-Unterstuetzung           |
 | \`["1x1", "2x2"]\`       | 2 Optionen                | Ueberspringt 2x1, direkt zum Widget  |
+
+### STAT_LIMITS (universelle Obergrenze)
+
+Das System definiert eine harte Obergrenze fuer sichtbare Stats/Entities pro Groesse:
+
+\`\`\`typescript
+const STAT_LIMITS: Record<TileSize, number> = { "1x1": 3, "2x1": 6, "2x2": 6 };
+\`\`\`
+
+Diese Limits werden vom TileDialog (Checkboxen + Entity-Picker) und vom StatsDisplay
+(Anzeige) verwendet. Beim Groessenwechsel werden ueberzaehlige Auswahlen automatisch getrimmt.
 
 ### Pflichtregeln
 
@@ -118,6 +130,17 @@ renderHints: {
   },
 }
 \`\`\`
+
+## Konfiguration fuer 1x1
+
+1x1 wird ueber **statOptions Checkboxen** im TileDialog gesteuert.
+Der User waehlt welche Stats sichtbar sind (max 3).
+Es gibt KEIN Widget und KEINE Widget-spezifischen configFields.
+
+- \`statOptions\` mit \`showForSizes: ["1x1"]\` verwenden, wenn das Plugin auch Widgets hat
+  (damit der User keine Checkboxen sieht die nur im Widget wirken)
+- configFields mit \`showForSizes\` auf Widget-Groessen beschraenken — sie erscheinen
+  im 1x1 Dialog NICHT (werden automatisch ausgeblendet)
 
 ## Einschraenkungen
 
@@ -206,6 +229,18 @@ renderHints: {
   },
 }
 \`\`\`
+
+## Konfiguration fuer 2x1
+
+2x1 Widgets werden ueber **configFields mit showForSizes** gesteuert.
+Typische Konfiguration:
+
+- **2x Gauge-Auswahl:** \`showForSizes: ["2x1", "2x2"]\` — welche Metriken als CircularProgress
+- **3x Info-Zeilen:** \`showForSizes: ["2x1"]\` — welche Daten in den Text-Zeilen neben den Gauges
+- **statOptions** sollten \`showForSizes: ["1x1"]\` haben, damit der 2x1 Dialog
+  keine Checkboxen zeigt die im Widget nicht wirken
+
+Das Widget liest die Auswahl aus \`config.gauge1\`, \`config.info1\` etc.
 
 ## Einschraenkungen
 
@@ -313,6 +348,20 @@ renderHints: {
   },
 }
 \`\`\`
+
+## Konfiguration fuer 2x2
+
+2x2 ist das groesste Widget und hat am meisten konfigurierbare Bereiche.
+Jede sichtbare Sektion im Widget sollte eine Config-Option haben:
+
+- **4x Gauge-Auswahl:** \`showForSizes: ["2x2"]\` (gauge3/gauge4 nur fuer 2x2,
+  gauge1/gauge2 mit \`["2x1", "2x2"]\` geteilt)
+- **Slot-Konfiguration:** \`showForSizes: ["2x2"]\` — welcher Inhalt in welchem Bereich
+  (z.B. "Docker Container", "Disk Temperaturen", "Ausblenden")
+- **Filter:** \`showForSizes: ["2x2"]\` — z.B. "Alle Container" vs "Nur laufende"
+- **Show/Hide Toggles:** \`showForSizes: ["2x2"]\` — einzelne Sektionen ein-/ausblenden
+
+**Kernregel:** Was der User im Widget sieht, muss er im Dialog steuern koennen.
 
 ## Einschraenkungen
 

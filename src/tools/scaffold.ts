@@ -28,6 +28,7 @@ interface ConfigFieldInput {
   required: boolean;
   placeholder?: string;
   description?: string;
+  showForSizes?: string[];
 }
 
 interface StatOptionInput {
@@ -35,6 +36,7 @@ interface StatOptionInput {
   label: string;
   description: string;
   defaultEnabled: boolean;
+  showForSizes?: string[];
 }
 
 function generateRenderHints(
@@ -83,6 +85,9 @@ function generateConfigFields(fields: ConfigFieldInput[]): string {
       if (f.required) lines.push(`      required: true,`);
       if (f.placeholder) lines.push(`      placeholder: "${sanitize(f.placeholder)}",`);
       if (f.description) lines.push(`      description: "${sanitize(f.description)}",`);
+      if (f.showForSizes && f.showForSizes.length > 0) {
+        lines.push(`      showForSizes: [${f.showForSizes.map((s) => `"${s}"`).join(", ")}],`);
+      }
       lines.push(`    }`);
       return lines.join("\n");
     })
@@ -91,10 +96,20 @@ function generateConfigFields(fields: ConfigFieldInput[]): string {
 
 function generateStatOptions(options: StatOptionInput[]): string {
   return options
-    .map(
-      (o) =>
-        `    {\n      key: "${sanitize(o.key)}",\n      label: "${sanitize(o.label)}",\n      description: "${sanitize(o.description)}",\n      defaultEnabled: ${o.defaultEnabled},\n    }`,
-    )
+    .map((o) => {
+      const lines = [
+        `    {`,
+        `      key: "${sanitize(o.key)}",`,
+        `      label: "${sanitize(o.label)}",`,
+        `      description: "${sanitize(o.description)}",`,
+        `      defaultEnabled: ${o.defaultEnabled},`,
+      ];
+      if (o.showForSizes && o.showForSizes.length > 0) {
+        lines.push(`      showForSizes: [${o.showForSizes.map((s) => `"${s}"`).join(", ")}],`);
+      }
+      lines.push(`    }`);
+      return lines.join("\n");
+    })
     .join(",\n");
 }
 
@@ -131,6 +146,7 @@ function generatePluginCode(params: {
   hasCrawler: boolean;
   hasWidget: boolean;
   hasOAuth: boolean;
+  hasNotifications: boolean;
 }): string {
   const {
     id,
@@ -143,6 +159,7 @@ function generatePluginCode(params: {
     hasCrawler,
     hasWidget,
     hasOAuth,
+    hasNotifications,
   } = params;
 
   const pascalName = toPascalCase(name.replace(/\s+/g, ""));
@@ -277,6 +294,36 @@ function generatePluginCode(params: {
   },`
     : "";
 
+  const notificationSection = hasNotifications
+    ? `
+
+  supportsNotifications: true,
+
+  // Plugin-originated Notifications: Wird nach jedem fetchStats-Poll aufgerufen.
+  // currentData = aktuelles widgetData, previousData = vorheriges (null beim ersten Poll!)
+  async checkNotifications(config: PluginConfig, currentData: Record<string, unknown>, previousData: Record<string, unknown> | null) {
+    const notifications: import("../../types").PluginNotification[] = [];
+
+    // WICHTIG: Beim ersten Poll (previousData=null) niemals feuern!
+    if (!previousData) return notifications;
+
+    // TODO: Zustandsaenderungen erkennen und Notifications erzeugen
+    // Beispiel:
+    // const prevStatus = previousData.someStatus as string;
+    // const currStatus = currentData.someStatus as string;
+    // if (prevStatus === "online" && currStatus === "offline") {
+    //   notifications.push({
+    //     dedupKey: "service-offline",
+    //     title: "Service ist offline",
+    //     category: "critical",
+    //     tag: "System",
+    //   });
+    // }
+
+    return notifications;
+  },`
+    : "";
+
   const widgetImportLine = hasWidget
     ? `import { ${pascalName}Widget } from "./${pascalName}Widget";\n`
     : "";
@@ -338,12 +385,15 @@ ${selectedEntitiesBlock}
 
 ${visibleStatsConditions}
 
-      // Optional: widgetData fuer reichhaltige Widget-Daten (Cover-Bilder, Listen, etc.)
-      // Nur noetig wenn ein Widget mehr als Stats braucht.
+      // Optional: widgetData fuer reichhaltige Widget-Daten
+      // Das Widget liest config-Werte (z.B. config.gauge1, config.displayMode)
+      // und widgetData fuer reichhaltige Daten (Cover-Bilder, Listen, etc.)
       // const widgetData = {
+      //   // Rohdaten fuer Widget-Rendering:
       //   recentItems: [...],
-      //   // Config-Werte fuer das Widget durchreichen:
-      //   // someConfigValue: parseInt(String(config.someField || "5"), 10),
+      //   // Config-Werte die das Widget steuern:
+      //   gauge1: String(config.gauge1 || "cpu"),
+      //   displayMode: String(config.displayMode || "default"),
       // };
 
       return { items, status: "ok" /* , widgetData */ };
@@ -377,7 +427,7 @@ ${visibleStatsConditions}
     } catch (err) {
       return { ok: false, message: (err as Error).message };
     }
-  },${crawlerSection}${oauthSection}
+  },${crawlerSection}${oauthSection}${notificationSection}
 };
 ${widgetExports}`;
 }
@@ -665,9 +715,13 @@ export function registerScaffoldTools(server: McpServer): void {
               .string()
               .optional()
               .describe("Help text in German"),
+            showForSizes: z
+              .array(z.string())
+              .optional()
+              .describe('Only show for these tile sizes, e.g. ["2x1", "2x2"]. Omit for all sizes.'),
           }),
         )
-        .describe("Configuration form fields"),
+        .describe("Configuration form fields. Use showForSizes to limit widget-specific fields to larger tiles."),
       statOptions: z
         .array(
           z.object({
@@ -679,9 +733,13 @@ export function registerScaffoldTools(server: McpServer): void {
             defaultEnabled: z
               .boolean()
               .describe("Enabled by default?"),
+            showForSizes: z
+              .array(z.string())
+              .optional()
+              .describe('Only show for these sizes, e.g. ["1x1"]. Use when plugin has widgets to avoid useless checkboxes.'),
           }),
         )
-        .describe("Selectable statistics"),
+        .describe("Selectable statistics. Use showForSizes: ['1x1'] when plugin has widgets."),
       supportedSizes: z
         .array(z.string())
         .describe('Supported tile sizes, e.g. ["1x1", "2x1", "2x2"]'),
@@ -697,6 +755,11 @@ export function registerScaffoldTools(server: McpServer): void {
         .boolean()
         .describe(
           "Whether this plugin uses OAuth (generates exchangeToken + refreshToken skeletons)",
+        ),
+      hasNotifications: z
+        .boolean()
+        .describe(
+          "Whether this plugin detects state changes and sends notifications (generates checkNotifications skeleton)",
         ),
     },
     async (params) => {

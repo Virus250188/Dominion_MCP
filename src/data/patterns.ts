@@ -3,7 +3,7 @@
 // Served to AI agents via MCP tools to guide correct plugin implementation.
 //
 // LAST_SYNCED: 2026-04-10
-// DASHBOARD_VERSION: 1.0.7-alpha
+// DASHBOARD_VERSION: 1.3.0-beta
 // SOURCE: Dashboard/src/plugins/types.ts, utils.ts, builtin/emby/index.ts
 // ────────────────────────────────────────────────────────────────────────────
 
@@ -81,6 +81,13 @@ export const plugin: AppPlugin = {
 
   // Optional: Notification-Support
   supportsNotifications?: boolean,  // true = Plugin kann als Notification-Quelle dienen
+
+  // Optional: Plugin-originated Notifications (empfohlen wenn supportsNotifications: true)
+  async checkNotifications?(
+    config: PluginConfig,
+    currentData: Record<string, unknown>,      // Aktuelles widgetData aus fetchStats
+    previousData: Record<string, unknown> | null, // Vorheriges widgetData (null beim ersten Poll!)
+  ): Promise<PluginNotification[]> { ... },
 };
 
 // PFLICHT fuer Auto-Discovery (auch wenn null):
@@ -115,6 +122,7 @@ interface ConfigField {
   options?: { label: string; value: string }[];  // Nur fuer type: "select"
   min?: number;         // Nur fuer type: "number"
   max?: number;         // Nur fuer type: "number"
+  showForSizes?: TileSize[];  // Optional: Feld nur fuer bestimmte Tile-Groessen anzeigen (z.B. ["2x1", "2x2"])
   oauth?: {             // Nur fuer type: "oauth"
     authUrl: string;    // Authorization Endpoint des Providers
     tokenUrl: string;   // Token Exchange Endpoint
@@ -131,6 +139,7 @@ interface StatOption {
   label: string;         // Label auf Deutsch (z.B. "Speicher-Belegung")
   description: string;   // Beschreibung auf Deutsch (z.B. "Prozent des belegten Speichers")
   defaultEnabled: boolean; // Standard-aktiviert? (true fuer die wichtigsten 2-3)
+  showForSizes?: TileSize[];  // Optional: Nur fuer bestimmte Tile-Groessen anzeigen
 }
 \`\`\`
 
@@ -164,6 +173,20 @@ interface CrawlEntityGroup {
     name: string;      // Anzeigename (z.B. "Kueche Temperatur")
     state: string;     // Aktueller Status (z.B. "23.5", "on", "running")
   }>;
+}
+\`\`\`
+
+### PluginNotification (fuer checkNotifications)
+\`\`\`typescript
+interface PluginNotification {
+  dedupKey: string;        // Eindeutiger Dedup-Key (z.B. "container-stopped-abc123")
+  title: string;           // Notification-Titel (max 255 Zeichen)
+  message?: string;        // Body-Text (max 2000 Zeichen)
+  category: "info" | "warning" | "critical" | "update";
+  priority?: number;       // 0-3, default 1
+  tag?: string;            // Gruppierung (z.B. "Docker", "Array", "Disk")
+  url?: string;            // Link zum Oeffnen bei Klick
+  dedupMinutes?: number;   // Unterdrueckung gleicher dedupKey fuer N Minuten (default: 60)
 }
 \`\`\`
 `,
@@ -295,6 +318,7 @@ configFields: [
     key: "carouselSpeed",
     label: "Karussell-Geschwindigkeit",
     type: "select",
+    showForSizes: ["2x1", "2x2"],  // Nur fuer Widget-Groessen anzeigen
     options: [
       { label: "Langsam (8s)", value: "8000" },
       { label: "Normal (5s)", value: "5000" },
@@ -357,6 +381,35 @@ statOptions: [
 4. **Descriptions auf Deutsch** - erklaeren was der Stat zeigt
 5. **key muss in fetchStats verwendet werden** - via \`visibleStats.includes(key)\`
 6. **Max 6 statOptions empfohlen** - Validator schneidet bei 6 Items ab
+
+## showForSizes bei StatOptions
+
+StatOptions koennen \`showForSizes\` definieren, um bestimmte Stats nur fuer
+bestimmte Tile-Groessen im TileDialog anzubieten:
+
+\`\`\`typescript
+statOptions: [
+  {
+    key: "streams",
+    label: "Aktive Streams",
+    description: "Anzahl der aktiven Streaming-Sessions",
+    defaultEnabled: true,
+    // Kein showForSizes → wird fuer alle Groessen angezeigt (Standard)
+  },
+  {
+    key: "detailedTraffic",
+    label: "Traffic Details",
+    description: "Detaillierte Traffic-Statistiken",
+    defaultEnabled: false,
+    showForSizes: ["2x1", "2x2"],  // Nur fuer groessere Tiles sinnvoll
+  },
+],
+\`\`\`
+
+- Wenn \`showForSizes\` **nicht gesetzt** ist (Standard): Stat-Option erscheint fuer alle Groessen
+- Wenn gesetzt: Nur wenn die aktuelle Tile-Groesse im Array enthalten ist
+- Beim Wechsel auf eine Groesse, in der ein bereits gewaehlter Stat nicht verfuegbar ist,
+  wird dieser automatisch abgewaehlt
 
 ## Wie visibleStats in fetchStats funktioniert
 
@@ -487,6 +540,7 @@ angezeigt, nachdem der Verbindungstest erfolgreich war.
   key: "carouselSpeed",
   label: "Karussell-Geschwindigkeit",
   type: "select",
+  showForSizes: ["2x1", "2x2"],  // Nur fuer Widget-Groessen
   options: [
     { label: "Langsam (8s)", value: "8000" },
     { label: "Normal (5s)", value: "5000" },
@@ -497,6 +551,7 @@ angezeigt, nachdem der Verbindungstest erfolgreich war.
   key: "carouselItems",
   label: "Anzahl Covers",
   type: "select",
+  showForSizes: ["2x1", "2x2"],  // Nur fuer Widget-Groessen
   options: [
     { label: "3 Covers", value: "3" },
     { label: "5 Covers", value: "5" },
@@ -755,11 +810,14 @@ type SelectedEntity = { id: string; label: string };
 
 ## Entity-Limits pro Tile-Groesse
 
-- **1x1:** Maximal 3 Entities (STAT_LIMIT)
+Das System nutzt die Konstante \`STAT_LIMITS = { "1x1": 3, "2x1": 6, "2x2": 6 }\`:
+
+- **1x1:** Maximal 3 Entities
 - **2x1:** Maximal 6 Entities
 - **2x2:** Maximal 6 Entities
 
 Der Entity-Picker zeigt dem User diese Limits an und verhindert Ueberauswahl.
+Beim Groessenwechsel werden ueberzaehlige Entities automatisch getrimmt.
 
 ## Dashboard Entity-Picker Verhalten
 
@@ -836,12 +894,31 @@ async crawlEntities(config: PluginConfig) {
 5. User waehlt gewuenschte Entities
 6. Auswahl wird als \`selectedEntities\` JSON in der Config gespeichert
 
-## Dual-Format Support in fetchStats
+## selectedEntities in fetchStats
 
-Plugins mit crawlEntities MUESSEN beide Formate in fetchStats lesen:
+Der Entity-Picker speichert die Auswahl als JSON-Array in \`config.selectedEntities\`.
+Empfohlenes Parsing:
 
 \`\`\`typescript
-// Neues Format (vom Entity-Picker gespeichert)
+// Empfohlen: Direktes Casten (neues Format vom Entity-Picker)
+const entities = (config.selectedEntities as Array<{ id: string; label: string }>) ?? [];
+
+for (const entity of entities) {
+  // entity.id    = "sensor.wohnzimmer_temperatur"
+  // entity.label = "Wohnzimmer Temp" (Custom-Label vom User)
+  const res = await fetch(\\\`\\\${baseUrl}/api/states/\\\${entity.id}\\\`, fetchOpts);
+  if (!res.ok) continue;
+  const data = await res.json();
+  items.push({ label: entity.label, value: data.state ?? "unknown" });
+}
+\`\`\`
+
+### Legacy-Fallback (optional)
+
+Aeltere Tile-Konfigurationen koennten noch das alte \`entityIds\` Textarea-Format verwenden.
+Falls Abwaertskompatibilitaet noetig ist:
+
+\`\`\`typescript
 let entityEntries: { id: string; customLabel?: string }[] = [];
 if (config.selectedEntities) {
   try {
@@ -854,8 +931,6 @@ if (config.selectedEntities) {
     }
   } catch { /* fall through to legacy */ }
 }
-
-// Legacy-Format (Textarea mit entity_id:Label pro Zeile)
 if (entityEntries.length === 0 && config.entityIds) {
   entityEntries = String(config.entityIds)
     .split(/[\\n,]/)
@@ -1175,26 +1250,33 @@ Plugin-Entwickler muessen darauf achten:
   (oder required weglassen, da default false)
 - Feature-Felder werden NUR angezeigt wenn die Verbindung bereits getestet wurde
 
-## Widget-Only Keys (groessenabhaengige Sichtbarkeit)
+## showForSizes (groessenabhaengige Sichtbarkeit)
 
-Feature-Fields mit bestimmten Keys werden NUR angezeigt, wenn die aktuell
-gewaehlte Tile-Groesse \`layout: "widget"\` in den renderHints hat:
+ConfigFields und StatOptions koennen \`showForSizes\` definieren, um sie nur fuer
+bestimmte Tile-Groessen im TileDialog anzuzeigen. Das ersetzt hardcodierte Key-Listen:
 
 \`\`\`typescript
-const WIDGET_ONLY_KEYS = new Set(["carouselSpeed", "carouselItems"]);
-const currentHint = plugin.renderHints[currentSize];
-const isWidgetLayout = currentHint?.layout === "widget";
-
-// Feature-Fields werden zusaetzlich gefiltert:
+// Feature-Fields werden nach showForSizes gefiltert (falls definiert):
 const featureFields = plugin.configFields
   .filter((f) => !CONNECTION_KEYS.has(f.key) && !f.required && f.type !== "oauth")
-  .filter((f) => isWidgetLayout || !WIDGET_ONLY_KEYS.has(f.key));
+  .filter((f) => !f.showForSizes || f.showForSizes.includes(currentSize));
 \`\`\`
 
 **Bedeutung fuer Plugin-Entwickler:**
-- Wenn ein User 1x1 waehlt (layout: "compact"): carouselSpeed und carouselItems sind **ausgeblendet**
-- Wenn ein User 2x1 oder 2x2 waehlt (layout: "widget"): Diese Felder erscheinen
-- Die **Tile-Groesse bestimmt welche Einstellungen relevant sind** — nicht nur die Pixel-Dimensionen
+- \`showForSizes\` nicht gesetzt → Feld erscheint fuer **alle** Groessen (Standard, abwaertskompatibel)
+- \`showForSizes: ["2x1", "2x2"]\` → Feld nur fuer 2x1 und 2x2 sichtbar (z.B. carouselSpeed)
+- \`showForSizes: ["2x2"]\` → Feld nur fuer 2x2 sichtbar
+- Beim Groessenwechsel werden nicht-verfuegbare Felder automatisch ausgeblendet
+- **Gilt auch fuer StatOptions:** Stats mit \`showForSizes\` erscheinen nur bei passender Groesse
+
+## Bearbeiten einer bestehenden Tile (Edit Mode)
+
+Wenn der User eine bestehende Tile bearbeitet, die bereits eine AppConnection hat:
+- **Connection-Fields werden NICHT angezeigt** (apiUrl, apiKey, etc.)
+- Stattdessen erscheint ein **"Verbunden" Badge** mit Hinweis auf
+  **Einstellungen > Apps verwalten** fuer Verbindungsaenderungen
+- Nur **Feature-Fields**, **Stat-Auswahl** und **Entity-Picker** werden angezeigt
+- Das Plugin muss nichts aendern — der Edit-Mode wird vom TileDialog automatisch gehandhabt
 
 ## Size-spezifische Hints
 
@@ -1604,35 +1686,94 @@ Das ist ein Signal, kein API-Call. Das Dashboard ruft dann \`fetchStats()\` erne
 
 ## Konzept
 
-Das Dashboard hat ein Notification Panel (rechte Seite, nur auf xl-Screens sichtbar).
-Plugins koennen \`supportsNotifications: true\` setzen, damit der User sie als
-Notification-Quelle einrichten kann.
+Das Dashboard hat ein Notification Panel (rechte Seite). Plugins mit
+\`supportsNotifications: true\` koennen Notifications ausloesen.
 
-## Plugin-Seite: Nur ein Flag setzen
+Es gibt zwei Ansaetze:
+1. **Plugin-originated (empfohlen):** Plugin implementiert \`checkNotifications()\` —
+   erkennt Zustandsaenderungen automatisch beim Polling
+2. **Webhook:** Externer Service pushed Notifications via HTTP POST
+
+## 12.1 Plugin-Originated Notifications (checkNotifications) — EMPFOHLEN
+
+Das Dashboard ruft \`checkNotifications()\` nach jedem \`fetchStats\` Poll auf
+und uebergibt das aktuelle und vorherige \`widgetData\` zum Vergleich.
 
 \`\`\`typescript
 export const plugin: AppPlugin = {
   metadata: { ... },
-  // ...
-  supportsNotifications: true,  // Das ist alles!
+  supportsNotifications: true,
+
+  async checkNotifications(config, currentData, previousData) {
+    const notifications: PluginNotification[] = [];
+
+    // previousData ist null beim ersten Poll (oder nach Server-Restart)!
+    if (!previousData) return notifications;
+
+    // Beispiel: Zustandsaenderung erkennen
+    const prevStatus = previousData.arrayStatus as string;
+    const currStatus = currentData.arrayStatus as string;
+    if (prevStatus === "Started" && currStatus === "Stopped") {
+      notifications.push({
+        dedupKey: "array-stopped",
+        title: "Array gestoppt",
+        message: "Das Unraid Array wurde gestoppt.",
+        category: "critical",
+        tag: "Array",
+      });
+    }
+
+    return notifications;
+  },
+
+  async fetchStats(config) {
+    // ... WICHTIG: widgetData muss die Daten enthalten,
+    // die checkNotifications fuer Vergleiche braucht!
+    return {
+      items,
+      status: "ok",
+      widgetData: {
+        arrayStatus: data.arrayStatus,  // ← fuer Notification-Vergleiche
+        containers: data.containers,
+        // ...
+      },
+    };
+  },
 };
 \`\`\`
 
-Das Plugin muss KEINE Notification-Logik implementieren. Es deklariert nur,
-dass der Service Notifications senden KANN. Die Einrichtung und Verwaltung
-der Notification-Quellen passiert im Dashboard unter **Einstellungen > Benachrichtigungen**.
+### Wie es funktioniert
 
-## Dashboard-Seite: Was passiert
+1. Dashboard pollt \`fetchStats\` → erhaelt \`{ items, status, widgetData }\`
+2. Wenn \`supportsNotifications: true\` UND \`checkNotifications\` existiert:
+   - System uebergibt \`currentData\` (aktuelles widgetData) und \`previousData\` (vom letzten Poll)
+   - Plugin vergleicht und gibt Array von \`PluginNotification\` zurueck
+3. System handhabt Dedup, Speicherung und SSE-Broadcast automatisch
+4. \`NotificationSource\` (type: "plugin") wird beim ersten Check automatisch erstellt
 
-1. User geht zu **Einstellungen > Benachrichtigungen**
-2. Dashboard zeigt nur Plugins mit \`supportsNotifications: true\`
-3. User verknuepft eine bestehende AppConnection als Notification-Quelle
-4. Dashboard generiert einen **X-Notification-Key** (verschluesselter API Key)
-5. User konfiguriert seinen Service (z.B. Home Assistant Webhook) mit diesem Key
+### dedupKey-Strategie
 
-## Notification API (fuer den externen Service)
+Der \`dedupKey\` ist pro Plugin-NotificationSource eindeutig. Eine Notification mit
+dem gleichen \`dedupKey\` wird innerhalb von \`dedupMinutes\` (default: 60) nicht
+erneut ausgeloest, es sei denn der User hat die vorherige bestaetigt.
 
-Der Service sendet Notifications an das Dashboard via:
+**Strategie-Tipps:**
+- **State-based:** \`"array-stopped"\` — Feuert einmal pro Zustand
+- **Instance-based:** \`"container-stopped-\${containerId}"\` — Pro Item Dedup
+- **Threshold-based:** \`"disk-temp-\${diskName}"\` — Pro Disk pro Zeitfenster
+
+### Wichtige Regeln
+
+- **\`previousData\` ist null** beim ersten Poll nach Server-Start. Immer mit
+  \`if (!previousData) return []\` behandeln — niemals beim ersten Poll feuern!
+- **Fire-and-forget:** checkNotifications laeuft async, Fehler blockieren NICHT den Stats-Return
+- **Throttled:** Max 1x pro 30 Sekunden pro Tile (auch bei mehreren Browser-Tabs)
+- **widgetData designen fuer Vergleiche:** Die Daten die checkNotifications braucht,
+  MUESSEN in \`widgetData\` von \`fetchStats\` enthalten sein
+
+## 12.2 Webhook Notifications (Externer Push)
+
+Fuer Services die selbst HTTP-Requests senden koennen (z.B. Home Assistant Webhooks):
 
 \`\`\`
 POST /api/notifications
@@ -1646,14 +1787,16 @@ Body:
   "message": "Version 2.5.0 mit Bugfixes...",    // Optional, max 2000 Zeichen
   "category": "update",                          // "info" | "warning" | "critical" | "update"
   "tag": "Firmware",                             // Optional: Freies Tag
-  "priority": 1,                                 // 0=niedrig, 1=normal, 2=hoch, 3=kritisch
-  "url": "https://release-notes.example.com",    // Optional: Link zum Oeffnen
-  "icon": "CircuitBoard",                        // Optional: SimpleIcons Slug
-  "expiresAt": "2026-05-01T00:00:00Z"            // Optional: Ablaufdatum (ISO)
+  "priority": 1,                                 // 0-3
+  "url": "https://release-notes.example.com",    // Optional: Link
 }
 \`\`\`
 
-## Kategorien und ihre Darstellung
+Wenn \`supportsNotifications: true\` gesetzt ist, erscheint das Plugin in
+**Einstellungen > Benachrichtigungen > Neue Quelle > App verbinden**.
+Der User erhaelt einen API Key fuer Webhook-Authentifizierung.
+
+## Kategorien
 
 | Kategorie  | Farbe           | Animation              | Einsatz                        |
 |------------|-----------------|------------------------|--------------------------------|
@@ -1664,8 +1807,8 @@ Body:
 
 ## Rate Limiting
 
-- Pro Notification-Quelle konfigurierbar (Standard: Notifications/Stunde)
-- Bei Ueberschreitung: HTTP 429
+- **Plugin-originated:** Throttle auf Polling-Ebene (max 1x/30s pro Tile)
+- **Webhook:** Pro Quelle konfigurierbar (Standard: 60/Stunde), HTTP 429 bei Ueberschreitung
 
 ## Echtzeit-Delivery
 
@@ -1798,7 +1941,18 @@ const processedItems = stats.items.map(item => ({  // Laeuft bei jedem Render!
 - [ ] Deutsche Labels fuer Gruppen
 - [ ] Dual-Format Support in fetchStats (\`selectedEntities\` + \`entityIds\`)
 
-## 6. Optional: Widget-Komponente
+## 6. Optional: checkNotifications (Plugin-originated Notifications)
+
+- [ ] \`supportsNotifications: true\` gesetzt
+- [ ] \`checkNotifications(config, currentData, previousData)\` implementiert
+- [ ] \`previousData === null\` wird behandelt (erster Poll → leeres Array zurueck)
+- [ ] widgetData in fetchStats enthaelt ALLE Daten die fuer Vergleiche noetig sind
+- [ ] dedupKey-Strategie gewaehlt (state-based / instance-based / threshold-based)
+- [ ] Sinnvolle Kategorien: "critical" fuer Ausfaelle, "warning" fuer Schwellenwerte
+- [ ] Deutsche Notification-Titel und -Messages
+- [ ] Keine Notification beim ersten Poll (previousData=null Guard)
+
+## 7. Optional: Widget-Komponente
 
 - [ ] Datei: \`src/plugins/community/{id}/{Name}Widget.tsx\` (im Plugin-Ordner!)
 - [ ] \`"use client"\` Direktive am Anfang
@@ -1814,7 +1968,18 @@ const processedItems = stats.items.map(item => ({  // Laeuft bei jedem Render!
 - [ ] DOM-Baum flach (< 50 Elemente)
 - [ ] Keine Bilder > 100KB
 
-## 7. Testen
+## 8. Per-Size Konfiguration (wenn Widgets vorhanden)
+
+- [ ] statOptions haben \`showForSizes: ["1x1"]\` (damit 2x1/2x2 keine wirkungslosen Checkboxen zeigen)
+- [ ] Widget-spezifische configFields haben \`showForSizes: ["2x1", "2x2"]\` oder \`["2x2"]\`
+- [ ] Jede sichtbare Widget-Sektion hat eine zugehoerige Config-Option
+- [ ] Gauge-Felder bieten nur Prozentwert-Metriken als Optionen
+- [ ] 2x2-exklusive Felder (zusaetzliche Gauges, Slots) haben \`showForSizes: ["2x2"]\`
+- [ ] 1x1 Dialog zeigt NUR statOptions (keine Widget-spezifischen configFields)
+- [ ] 2x1/2x2 Dialog zeigt passende configFields (Gauge-Auswahl, Info-Zeilen, Slots)
+- [ ] Groessenwechsel im Dialog aktualisiert die sichtbaren Optionen
+
+## 9. Testen
 
 - [ ] \`npm run build\` kompiliert fehlerfrei
 - [ ] Verbindungstest im TileDialog funktioniert ("Verbunden mit ...")
@@ -1825,7 +1990,7 @@ const processedItems = stats.items.map(item => ({  // Laeuft bei jedem Render!
 - [ ] Error-State wird bei falscher Config angezeigt
 - [ ] visibleStats Toggle funktioniert (Stats erscheinen/verschwinden)
 
-## 8. Version-Bump (Pflicht bei jeder ZIP-Erstellung)
+## 10. Version-Bump (Pflicht bei jeder ZIP-Erstellung)
 
 - [ ] Version im Manifest hochgezaehlt (semver):
   - Bug-Fix: patch (1.0.0 -> 1.0.1)
@@ -1835,11 +2000,10 @@ const processedItems = stats.items.map(item => ({  // Laeuft bei jedem Render!
 `,
 
   helloWorldExample: `
-# Hello World Plugin — Komplettes Minimal-Beispiel
+# Hello World Plugin — Komplettes Beispiel mit Multi-Size
 
-Dieses Beispiel zeigt ein vollstaendiges, funktionsfaehiges Plugin mit allen
-Pflicht-Exports, korrekten Imports und Error-Handling. Es kann als Vorlage
-fuer jedes neue Plugin dienen.
+Dieses Beispiel zeigt ein vollstaendiges Plugin mit 1x1 + 2x1 Support,
+\`showForSizes\` fuer per-size Konfiguration, und allen Pflicht-Exports.
 
 ## plugin.manifest.json
 
@@ -1849,7 +2013,9 @@ fuer jedes neue Plugin dienen.
   "name": "Hello World",
   "version": "1.0.0",
   "author": "Dein Name",
-  "description": "Minimales Beispiel-Plugin fuer das Dominion Dashboard"
+  "description": "Minimales Beispiel-Plugin fuer das Dominion Dashboard",
+  "hasWidget": true,
+  "widgetFile": "HelloWorldWidget.tsx"
 }
 \`\`\`
 
@@ -1875,6 +2041,7 @@ export const plugin: AppPlugin = {
   },
 
   configFields: [
+    // Connection-Field (immer sichtbar)
     {
       key: "apiUrl",
       label: "Server URL",
@@ -1882,6 +2049,17 @@ export const plugin: AppPlugin = {
       required: true,
       placeholder: "http://192.168.1.100:8080",
       description: "URL des zu ueberwachenden Services",
+    },
+    // Widget-Config: Nur fuer 2x1 sichtbar
+    {
+      key: "displayMode",
+      label: "Darstellung",
+      type: "select",
+      showForSizes: ["2x1"],
+      options: [
+        { label: "Status + Antwortzeit", value: "status" },
+        { label: "Antwortzeit-Verlauf", value: "history" },
+      ],
     },
   ],
 
@@ -1891,19 +2069,22 @@ export const plugin: AppPlugin = {
       label: "Status",
       description: "Online/Offline Status des Services",
       defaultEnabled: true,
+      showForSizes: ["1x1"],  // Nur im 1x1 compact view als Checkbox
     },
     {
       key: "responseTime",
       label: "Antwortzeit",
       description: "HTTP-Antwortzeit in Millisekunden",
       defaultEnabled: true,
+      showForSizes: ["1x1"],  // Nur im 1x1 compact view als Checkbox
     },
   ],
 
-  supportedSizes: ["1x1"],
+  supportedSizes: ["1x1", "2x1"],
 
   renderHints: {
     "1x1": { maxStats: 3, layout: "compact" },
+    "2x1": { maxStats: 6, layout: "widget", widgetComponent: "HelloWorldWidget" },
   },
 
   async fetchStats(config: PluginConfig) {
@@ -1934,7 +2115,16 @@ export const plugin: AppPlugin = {
         });
       }
 
-      return { items, status: "ok" };
+      return {
+        items,
+        status: "ok",
+        // widgetData fuer das 2x1 Widget
+        widgetData: {
+          responseTime,
+          isOnline: res.ok,
+          displayMode: (config.displayMode as string) || "status",
+        },
+      };
     } catch (err) {
       return createErrorResponse(err);
     }
@@ -1955,22 +2145,25 @@ export const plugin: AppPlugin = {
 };
 
 // Pflicht-Exports fuer Community Auto-Discovery
-export const widget = null;       // Kein Widget (nur 1x1)
-export const widgetName = null;   // Kein Widget-Name
+export { HelloWorldWidget as widget } from "./HelloWorldWidget";
+export const widgetName = "HelloWorldWidget";
 \`\`\`
 
 ## Erklaerung der Schluessel-Patterns
 
-1. **Imports:** \`../../types\` fuer Interfaces, \`../../utils\` fuer Hilfsfunktionen
-   (diese Pfade sind korrekt im Dashboard nach dem Deployment)
-2. **visibleStats:** \`getVisibleStats(config, this.statOptions)\` — filtert nach User-Auswahl
-3. **normalizeUrl:** Entfernt trailing Slash von der URL
-4. **createFetchOptions(5000):** Erstellt RequestInit mit 5s AbortSignal.timeout
-5. **createErrorResponse:** Baut ein korrektes Error-PluginStats Objekt
-6. **try/catch:** Pflicht! Exceptions wuerden den Polling-Loop brechen
-7. **Deutsche Labels:** "Status", "Antwortzeit" — UI ist auf Deutsch
-8. **Farb-Konventionen:** green=gut, yellow=Warnung, red=schlecht
-9. **Drei Pflicht-Exports:** \`plugin\`, \`widget\`, \`widgetName\` (widget/widgetName = null wenn kein Widget)
+1. **showForSizes bei statOptions:** \`showForSizes: ["1x1"]\` — Checkboxen erscheinen nur im
+   1x1 Dialog. Im 2x1 Dialog sieht der User stattdessen die Widget-spezifischen configFields.
+2. **showForSizes bei configFields:** \`showForSizes: ["2x1"]\` — das \`displayMode\` Feld
+   erscheint nur wenn der User 2x1 waehlt. Im 1x1 Dialog ist es ausgeblendet.
+3. **widgetData:** fetchStats liefert \`widgetData\` mit reichhaltigen Daten fuer das Widget.
+   Das Widget liest \`config.displayMode\` aus den configFields.
+4. **visibleStats:** \`getVisibleStats(config, this.statOptions)\` — filtert nach User-Auswahl
+5. **normalizeUrl:** Entfernt trailing Slash von der URL
+6. **createFetchOptions(5000):** Erstellt RequestInit mit 5s AbortSignal.timeout
+7. **createErrorResponse:** Baut ein korrektes Error-PluginStats Objekt
+8. **try/catch:** Pflicht! Exceptions wuerden den Polling-Loop brechen
+9. **Deutsche Labels:** "Status", "Antwortzeit" — UI ist auf Deutsch
+10. **Drei Pflicht-Exports:** \`plugin\`, \`widget\`, \`widgetName\`
 `,
 
   sharedUtilitiesSource: `
@@ -2169,6 +2362,24 @@ auf dem Service-Typ. Nutze diese Tabelle als Orientierung.
 - **Immer loading/error/ok States** — WidgetHeader mit Status-Dot
 - **widgetData fuer alle Nicht-Stats-Daten** — Cover-Bilder, Listen, Charts-Daten
 - **Deutsche Labels** — "Streams", "Belegt", "Geschwindigkeit", nicht englisch
+
+## Per-Size Konfiguration pro Service-Typ
+
+**Jede sichtbare Widget-Sektion braucht eine Config-Option im TileDialog.**
+
+| Service-Typ | 1x1 Konfiguration | 2x1 Konfiguration | 2x2 Konfiguration |
+|-------------|-------------------|-------------------|-------------------|
+| Monitoring | statOptions: CPU, RAM, Uptime | gauge1/gauge2 Select, info1-3 Select | 4x Gauge, Slot-System, Filter |
+| Media | statOptions: Streams, Bibliothek | displayMode Select | carouselSpeed, carouselItems, mediaCategory |
+| Smart Home | statOptions (via crawlEntities) | Entity-Layout Select | Entity-Grid Konfiguration |
+| Storage | statOptions: Belegt, Frei, Health | gauge1/gauge2, Pool-Anzeige | Pool-Grid, Disk-Ansicht, Temp-Anzeige |
+| Netzwerk | statOptions: Queries, Blocked | Chart-Zeitraum, Info-Zeilen | Dashboard-Layout, Top-Listen |
+
+**Umsetzung:**
+- statOptions mit \`showForSizes: ["1x1"]\` wenn das Plugin Widgets hat
+- Widget-Config mit \`showForSizes: ["2x1", "2x2"]\` oder \`["2x2"]\`
+- Gauge-Felder: Nur Prozentwert-Metriken als Optionen (CircularProgress)
+- Slots: Select mit "Ausblenden" als Option fuer optionale Bereiche
 `,
 
   tileDialogFlow: `
@@ -2272,7 +2483,7 @@ Felder mit key = apiUrl, apiKey, accessToken, username, password, oder type = oa
 **Feature-Fields** (erscheinen NACH dem Verbindungstest):
 Alle anderen Felder (z.B. carouselSpeed, mediaCategory, entityFilter)
 → Diese landen in Tile.enhancedConfig
-→ Werden NUR angezeigt wenn Layout = "widget" (fuer widget-spezifische Optionen)
+→ Werden nach \`showForSizes\` gefiltert (wenn definiert, sonst fuer alle Groessen sichtbar)
 
 ### WICHTIG: Dynamisches Options-Menue pro Groesse
 
@@ -2280,10 +2491,9 @@ Jede Tile-Groesse hat ihr EIGENES Options-Fenster im TileDialog!
 Wenn der User die Groesse wechselt, aendert sich was angezeigt wird:
 
 \`\`\`
-User waehlt 1x1 → Nur Stat-Checkboxen (max 3), KEINE Feature-Fields
-User waehlt 2x1 mit layout "detailed" → Stat-Checkboxen (max 6), KEINE Widget-Fields
-User waehlt 2x1 mit layout "widget" → Stat-Checkboxen + Widget-spezifische Fields
-User waehlt 2x2 mit layout "widget" → Stat-Checkboxen + ALLE Widget-Fields
+User waehlt 1x1 → Stat-Checkboxen (max 3), Feature-Fields ohne showForSizes oder mit "1x1" drin
+User waehlt 2x1 → Stat-Checkboxen (max 6), Feature-Fields ohne showForSizes oder mit "2x1" drin
+User waehlt 2x2 → Stat-Checkboxen (max 6), Feature-Fields ohne showForSizes oder mit "2x2" drin
 \`\`\`
 
 **Beispiel:** Ein Media-Plugin hat ein \`select\`-Feld "Darstellung" mit

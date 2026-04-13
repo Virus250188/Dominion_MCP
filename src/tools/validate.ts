@@ -448,7 +448,6 @@ function validatePlugin(params: {
 
   // 25. Feature-Field visibility warning
   const CONNECTION_KEYS = new Set(["apiUrl", "apiKey", "accessToken", "username", "password"]);
-  const WIDGET_ONLY_KEYS = new Set(["carouselSpeed", "carouselItems"]);
   const configFieldMatches = [...pluginCode.matchAll(/\{\s*key\s*:\s*["']([^"']+)["'][^}]*?required\s*:\s*(true|false)/g)];
   for (const match of configFieldMatches) {
     const key = match[1];
@@ -458,16 +457,17 @@ function validatePlugin(params: {
       // Check for oauth type
       const fieldBlock = pluginCode.slice(Math.max(0, match.index! - 20), match.index! + match[0].length + 100);
       const isOAuth = /type\s*:\s*["']oauth["']/.test(fieldBlock);
+      const hasShowForSizes = /showForSizes\s*:/.test(fieldBlock);
 
       if (!isOAuth) {
-        if (WIDGET_ONLY_KEYS.has(key)) {
+        if (hasShowForSizes) {
           warnings.push(warn(
-            `ConfigField "${key}" ist ein Widget-Only Key — wird nur bei Widget-Layout (2x1/2x2) angezeigt (Dashboard WIDGET_ONLY_KEYS).`,
+            `ConfigField "${key}" hat showForSizes — wird nur fuer die angegebenen Tile-Groessen angezeigt.`,
           ));
         } else {
           warnings.push(warn(
             `ConfigField "${key}" ist nicht required und kein Connection-Key — es wird erst nach erfolgreichem Verbindungstest sichtbar. Ist das beabsichtigt?`,
-            `Connection-Keys (sofort sichtbar): apiUrl, apiKey, accessToken, username, password.\nAlle anderen Felder erscheinen erst NACH dem Verbindungstest als "Feature-Fields".`,
+            `Connection-Keys (sofort sichtbar): apiUrl, apiKey, accessToken, username, password.\nAlle anderen Felder erscheinen erst NACH dem Verbindungstest als "Feature-Fields".\nTipp: Nutze showForSizes um Felder nur fuer bestimmte Tile-Groessen anzuzeigen.`,
           ));
         }
       }

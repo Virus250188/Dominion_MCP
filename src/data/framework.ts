@@ -3,7 +3,7 @@
 // Served to AI agents via MCP tools to guide plugin development.
 //
 // LAST_SYNCED: 2026-04-10
-// DASHBOARD_VERSION: 1.0.7-alpha
+// DASHBOARD_VERSION: 1.3.0-beta
 // SOURCE: Dashboard/src/plugins/types.ts, registry.ts, utils.ts, validator.ts
 // ────────────────────────────────────────────────────────────────────────────
 
@@ -112,9 +112,10 @@ entweder in \`src/plugins/community/\` ablegen ODER ueber
   carouselSpeed, carouselItems }\` fuer ein Medien-Karussell im Widget.
 
 - **Notification-System:** Das Dashboard hat ein Notification Panel (rechte Seite).
-  Plugins koennen \`supportsNotifications: true\` setzen, damit der User sie als
-  Notification-Quelle einrichten kann. Externe Services senden Notifications
-  via \`POST /api/notifications\` mit \`X-Notification-Key\` Header.
+  Plugins mit \`supportsNotifications: true\` koennen Notifications ausloesen.
+  **Empfohlen:** Plugin implementiert \`checkNotifications(config, currentData, previousData)\`
+  — wird nach jedem fetchStats-Poll aufgerufen, erkennt Zustandsaenderungen automatisch.
+  **Alternativ:** Externer Webhook via \`POST /api/notifications\` mit \`X-Notification-Key\`.
   Kategorien: \`"info"\` | \`"warning"\` | \`"critical"\` | \`"update"\`.
   Notifications werden per SSE in Echtzeit an das Dashboard gepusht.
 
@@ -443,7 +444,7 @@ Der Entwickler bestimmt nur, welche Daten und Visualisierungen darin erscheinen.
 ### 2. Konfigurationsfelder (\`configFields: ConfigField[]\`)
 - Welche Eingabefelder der Benutzer im TileDialog sieht
 - Typen: \`"text"\` | \`"password"\` | \`"url"\` | \`"textarea"\` | \`"select"\` | \`"number"\`
-- Jedes Feld hat: key, label, type, placeholder?, required?, description?, options?, min?, max?
+- Jedes Feld hat: key, label, type, placeholder?, required?, description?, options?, min?, max?, showForSizes?
 - Labels und Beschreibungen auf Deutsch
 - \`apiUrl\` ist fast immer das erste Pflichtfeld (type: "url", required: true)
 
@@ -459,7 +460,7 @@ automatisch nach dem Verbindungstest und uebernimmt die Entity-Auswahl.
 
 ### 3. Statistik-Optionen (\`statOptions: StatOption[]\`)
 - Welche Stats der Benutzer aktivieren/deaktivieren kann
-- Jede Option hat: key, label, description, defaultEnabled
+- Jede Option hat: key, label, description, defaultEnabled, showForSizes?
 - Labels und Beschreibungen auf Deutsch
 - defaultEnabled: true fuer die wichtigsten 2-3 Stats
 
@@ -491,8 +492,11 @@ selectedEntities, etc.). Das bedeutet:
 - Im TileDialog werden diese Feature-Felder ERST angezeigt, nachdem der Verbindungstest
   erfolgreich war (Connection-Fields vs Feature-Fields Split)
 - Feature-Felder nutzen haeufig \`type: "select"\` mit vordefinierten Optionen
-- Beispiel (Emby): \`mediaCategory\` (Filme/Serien/Mixed), \`carouselSpeed\` (3s/5s/8s),
-  \`carouselItems\` (3/5/8/10 Covers)
+- Feature-Felder koennen \`showForSizes\` definieren, um sie nur fuer bestimmte
+  Tile-Groessen im TileDialog anzuzeigen (z.B. \`showForSizes: ["2x1", "2x2"]\`)
+- Wenn \`showForSizes\` nicht gesetzt ist, wird das Feld fuer alle Groessen angezeigt
+- Beispiel (Emby): \`mediaCategory\` (Filme/Serien/Mixed), \`carouselSpeed\` (3s/5s/8s,
+  \`showForSizes: ["2x1", "2x2"]\`), \`carouselItems\` (3/5/8/10 Covers)
 
 ### 7. fetchStats-Logik (\`fetchStats(config) -> Promise<PluginStats>\`)
 - Shared Utilities verwenden:
@@ -561,16 +565,17 @@ selectedEntities, etc.). Das bedeutet:
 - \`id\` muss mit \`metadata.id\` und dem Ordnernamen uebereinstimmen
 - Pflicht fuer ZIP-Upload, empfohlen fuer manuell platzierte Plugins
 
-### 14. Optional: Notification-Support (\`supportsNotifications\`)
-- Setze \`supportsNotifications: true\` wenn der Service Notifications an das Dashboard senden kann
-- Der User kann dann unter **Einstellungen > Benachrichtigungen** eine Notification-Quelle
-  fuer dieses Plugin einrichten (mit AppConnection verknuepft)
-- Der Service sendet Notifications via \`POST /api/notifications\` mit \`X-Notification-Key\` Header
-- Payload: \`{ title, message?, category, tag?, priority?, url?, icon?, expiresAt? }\`
+### 14. Optional: Notification-Support (\`supportsNotifications\` + \`checkNotifications\`)
+- Setze \`supportsNotifications: true\` um Notifications zu aktivieren
+- **Empfohlen:** Implementiere \`checkNotifications(config, currentData, previousData)\`
+  — erkennt Zustandsaenderungen automatisch beim Polling (z.B. Container gestoppt, Disk voll)
+  — gibt \`PluginNotification[]\` zurueck mit dedupKey, title, category, tag
+  — \`previousData\` ist null beim ersten Poll → immer mit leerem Array behandeln!
+  — widgetData aus fetchStats MUSS die Daten enthalten die fuer Vergleiche noetig sind
+- **Alternativ:** Webhook — externer Service sendet via \`POST /api/notifications\` mit \`X-Notification-Key\`
 - Kategorien: \`"info"\` (neutral), \`"warning"\` (gelb), \`"critical"\` (rot, Pulse-Animation), \`"update"\` (blau)
-- Notifications erscheinen in Echtzeit im Notification Panel (SSE)
-- Das Plugin selbst muss KEINE Notification-Logik implementieren —
-  es deklariert nur \`supportsNotifications: true\`, der Rest ist Infrastruktur
+- System handhabt: Dedup (via dedupKey + Zeitfenster), NotificationSource Auto-Provisioning,
+  SSE-Broadcast, Throttling (max 1x/30s pro Tile)
 
 ### 15. Optional: OAuth (\`exchangeToken\` + \`refreshToken\`)
 - Nur fuer Services die OAuth brauchen (kein API Key verfuegbar)
@@ -675,6 +680,34 @@ Erstelle stattdessen eine Standard-Tile (einfacher Hyperlink).
       Gauges, Entity-Grid mit Toggle-Controls, Traffic-Charts.
       → MUSS mit einem Blick eine spezifische Information vermitteln.
       → Soll sich ABHEBEN von den kleinen Tiles.
+\`\`\`
+
+## Per-Size Konfiguration: Das wichtigste UX-Pattern
+
+**Jede Tile-Groesse hat ihre eigene Konfigurations-Strategie:**
+
+| Groesse | Konfiguration | Mechanismus |
+|---------|--------------|-------------|
+| 1x1 (compact) | statOptions Checkboxen | Auto-Renderer zeigt items[] |
+| 2x1 (widget) | configFields mit showForSizes | Widget liest config.xyz |
+| 2x2 (widget) | configFields mit showForSizes | Widget liest config.xyz |
+
+**Kernregel:** statOptions steuern den 1x1 compact view. configFields steuern
+die Widget-Darstellung. Beides gleichzeitig fuer dieselbe Groesse anzubieten
+verwirrt den User (Checkboxen die nichts aendern).
+
+**Umsetzung:**
+- statOptions bekommen \`showForSizes: ["1x1"]\` wenn das Plugin auch Widgets hat
+- Widget-spezifische configFields bekommen \`showForSizes: ["2x1", "2x2"]\` oder \`["2x2"]\`
+- Jede sichtbare Widget-Sektion (Gauge, Info-Zeile, Slot) braucht eine Config-Option
+- Gauges brauchen Select-Felder mit Prozentwert-Metriken als Optionen
+- 2x2 hat mehr Slots als 2x1 → zusaetzliche Fields nur fuer \`["2x2"]\`
+
+**Beispiel: System-Monitor**
+\`\`\`
+1x1 Dialog: [✓] CPU  [✓] RAM  [ ] Uptime     ← statOptions Checkboxen
+2x1 Dialog: Gauge Links [CPU ▾]  Gauge Rechts [RAM ▾]  Info 1 [Uptime ▾]  ← configFields
+2x2 Dialog: 4x Gauge-Auswahl + Slot-Konfiguration + Filter   ← noch mehr configFields
 \`\`\`
 
 ## Proaktives Design: Agent macht Vorschlaege
