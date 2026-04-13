@@ -2,7 +2,7 @@
 // Detailed specs for each tile size in the Dominion Dashboard.
 // Served to AI agents via MCP tools to guide plugin rendering decisions.
 //
-// LAST_SYNCED: 2026-04-10
+// LAST_SYNCED: 2026-04-13
 // DASHBOARD_VERSION: 1.3.0-beta
 // SOURCE: Dashboard/src/components/dashboard/EnhancedTile.tsx, TileDialog.tsx
 // ────────────────────────────────────────────────────────────────────────────
@@ -415,7 +415,7 @@ Verwende 2x2 wenn:
   - Emby: Medien-Karussell mit Cover, Bewertungen, Beschreibungen (Referenz-Widget)
   - Smart-Home: Entity-Cards im Grid mit Icons und Farben
   - NAS-Service: Pool-Liste + Kreisdiagramm + Uptime-Visualisierung
-  - Firewall: Interface-Stats + Traffic-Graph + Threat Map
+  - Firewall: Interface-Stats + WAN-Traffic-Sparkline + pf-States + Top-Events Aggregation
 
 ## Mehrere Tiles gleichzeitig
 

@@ -783,6 +783,10 @@ k) Hat der Service waehlbare Entities? (Geraete, Container, VMs?)
    → Falls ja: crawlEntities implementieren
 l) Gibt es interaktive Aktionen? (Play/Pause, Toggle, Restart?)
    → Falls ja: Widget-Actions Pattern verwenden
+m) Soll der Service Benachrichtigungen ausloesen? (Service down, Disk voll,
+   Container gestoppt, IP geaendert?)
+   → Falls ja: \`get_notification_spec\` aufrufen UND notificationRules-Katalog
+     gemeinsam mit dem User definieren BEVOR codiert wird
 
 ### Phase D: Selbst-Pruefung (frage DICH SELBST)
 m) Habe ich WIRKLICH alles was ich brauche?
@@ -796,11 +800,12 @@ die nicht funktioniert.
 
 ## Schritt 4: Specs lesen
 Rufe auf (je nach Bedarf):
-- \`get_data_contracts\` → PluginStats, StatItem, ConfigField Interfaces
+- \`get_data_contracts\` → PluginStats, StatItem, ConfigField Interfaces, CONNECTION_KEYS-Whitelist, crawlEntities ↔ statOptions Exklusivitaet
 - \`get_tile_size_spec\` (fuer jede gewuenschte Groesse) → Pixel-Dimensionen, Limits
 - \`get_widget_contract\` (falls Widget) → WidgetProps, WidgetHeader, Shared Components
-- \`get_entity_crawler_spec\` (falls Crawler) → CrawlEntityGroup Interface
-- \`get_performance_guidelines\` → Timeouts, Polling, Anti-Patterns
+- \`get_entity_crawler_spec\` (falls Crawler) → CrawlEntityGroup Interface. **WICHTIG:** crawlEntities ersetzt den statOptions-Picker UEBER ALLE Tile-Groessen — entscheide bewusst pro Plugin.
+- \`get_notification_spec\` (falls Plugin Zustands-Aenderungen meldet) → **PFLICHT** wenn das Plugin "Service down", "Disk voll", "Container gestoppt" o.ae. erkennen soll. Erklaert notificationRules-Katalog, tag→Rule-ID Filter, checkNotifications, expliziten User-Opt-in via TileDialog. **Wenn der User nach Benachrichtigungen, Alerts oder Status-Aenderungen fragt → JETZT rufen, nicht spaeter raten.**
+- \`get_performance_guidelines\` → Timeouts, Polling, Anti-Patterns (inkl. TLS self-signed Gotcha)
 - \`get_shared_utilities\` → Verfuegbare Hilfsfunktionen (getVisibleStats, formatBytes etc.)
 - \`get_shared_components\` (falls Widget) → WidgetHeader, CircularProgress etc. Quellcode
 
@@ -824,7 +829,7 @@ Falls Widget gewuenscht: Rufe \`scaffold_widget\` auf.
 
 ## Schritt 8: Validieren
 Rufe auf:
-- \`validate_plugin\` → Prueft alle 20+ Regeln (Code, Manifest, Widget) mit Fix-Vorschlaegen
+- \`validate_plugin\` → Prueft 30+ Regeln (Code, Manifest, Widget, Notifications, CONNECTION_KEYS) mit Fix-Vorschlaegen
 - \`test_typescript_syntax\` → Prueft Klammern, Imports, console.log
 
 ## Schritt 9: Preview (empfohlen)

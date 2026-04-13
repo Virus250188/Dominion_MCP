@@ -453,24 +453,37 @@ function validatePlugin(params: {
     const key = match[1];
     const isRequired = match[2] === "true";
 
-    if (!isRequired && !CONNECTION_KEYS.has(key)) {
-      // Check for oauth type
-      const fieldBlock = pluginCode.slice(Math.max(0, match.index! - 20), match.index! + match[0].length + 100);
-      const isOAuth = /type\s*:\s*["']oauth["']/.test(fieldBlock);
-      const hasShowForSizes = /showForSizes\s*:/.test(fieldBlock);
+    const fieldBlock = pluginCode.slice(Math.max(0, match.index! - 20), match.index! + match[0].length + 100);
+    const isOAuth = /type\s*:\s*["']oauth["']/.test(fieldBlock);
+    const hasShowForSizes = /showForSizes\s*:/.test(fieldBlock);
 
-      if (!isOAuth) {
-        if (hasShowForSizes) {
-          warnings.push(warn(
-            `ConfigField "${key}" hat showForSizes — wird nur fuer die angegebenen Tile-Groessen angezeigt.`,
-          ));
-        } else {
-          warnings.push(warn(
-            `ConfigField "${key}" ist nicht required und kein Connection-Key — es wird erst nach erfolgreichem Verbindungstest sichtbar. Ist das beabsichtigt?`,
-            `Connection-Keys (sofort sichtbar): apiUrl, apiKey, accessToken, username, password.\nAlle anderen Felder erscheinen erst NACH dem Verbindungstest als "Feature-Fields".\nTipp: Nutze showForSizes um Felder nur fuer bestimmte Tile-Groessen anzuzeigen.`,
-          ));
-        }
+    if (!isRequired && !CONNECTION_KEYS.has(key) && !isOAuth) {
+      if (hasShowForSizes) {
+        warnings.push(warn(
+          `ConfigField "${key}" hat showForSizes — wird nur fuer die angegebenen Tile-Groessen angezeigt.`,
+        ));
+      } else {
+        warnings.push(warn(
+          `ConfigField "${key}" ist nicht required und kein Connection-Key — es wird erst nach erfolgreichem Verbindungstest sichtbar. Ist das beabsichtigt?`,
+          `Connection-Keys (sofort sichtbar): apiUrl, apiKey, accessToken, username, password.\nAlle anderen Felder erscheinen erst NACH dem Verbindungstest als "Feature-Fields".\nTipp: Nutze showForSizes um Felder nur fuer bestimmte Tile-Groessen anzuzeigen.`,
+        ));
       }
+    }
+
+    // 31. Required configField that isn't a CONNECTION_KEY breaks tile-reuse
+    // (Dashboard hardcodes CONNECTION_KEYS = ["apiUrl","apiKey","accessToken","username","password"]
+    //  in core/src/lib/actions/tiles.ts:43. When a tile is created against an existing
+    //  AppConnection, only those keys are loaded from the saved row — any other required
+    //  field will fail validation with "Missing required config fields: <key>".)
+    if (isRequired && !CONNECTION_KEYS.has(key) && !isOAuth) {
+      const credentialish = /^(api)?(secret|token|bearer|auth|key|password|pass|pwd)$/i.test(key);
+      const remap = credentialish
+        ? `Benenne den Key um auf einen der CONNECTION_KEYS:\n  apiKey, accessToken, username, password\nz.B. \`{ key: "apiKey", label: "${key}", type: "password", required: true }\` (das Label kann frei bleiben).`
+        : `Entweder den Key auf einen CONNECTION_KEY (apiUrl/apiKey/accessToken/username/password) abbilden, oder das Feld auf \`required: false\` setzen damit es als per-Tile Feature-Field behandelt wird.`;
+      errors.push(err(
+        `ConfigField "${key}" ist required, aber kein CONNECTION_KEY — bricht beim Wiederverwenden einer Connection mit "Missing required config fields: ${key}".`,
+        `Hintergrund: Dashboard hat eine hardcodierte Liste CONNECTION_KEYS = ["apiUrl","apiKey","accessToken","username","password"] (core/src/lib/actions/tiles.ts:43). Beim Anlegen einer zweiten Tile auf derselben AppConnection laedt das Dashboard nur diese 5 Keys aus der gespeicherten Connection — alles andere wird als fehlend gemeldet.\n\n${remap}`,
+      ));
     }
   }
 
@@ -841,7 +854,7 @@ function validateRenderHints(renderHintsJson: string, supportedSizes: string[]):
 export function registerValidationTools(server: McpServer): void {
   server.tool(
     "validate_plugin",
-    "[Phase 4: Validieren] Validates plugin code, manifest, and widget against 30+ framework rules. Covers: types/exports, manifest, fetchStats shape, crawlEntities, feature-field visibility, notification system (supportsNotifications + notificationRules + checkNotifications + tag/rule-ID consistency), widget basics. Returns errors with fix suggestions. Call BEFORE create_plugin_zip.",
+    "[Phase 4: Validieren] Validates plugin code, manifest, and widget against 31 framework rules. Covers: types/exports, manifest, fetchStats shape, crawlEntities, feature-field visibility, CONNECTION_KEYS whitelist for required fields (catches the 'required apiSecret breaks tile-reuse' class of bugs), notification system (supportsNotifications + notificationRules + checkNotifications + tag/rule-ID consistency), widget basics. Returns errors with fix suggestions. Call BEFORE create_plugin_zip.",
     {
       pluginCode: z.string().describe("The full TypeScript source code of the plugin (index.ts)."),
       pluginId: z.string().optional().describe("Plugin ID in kebab-case. If provided, checks manifest ID match."),

@@ -13,6 +13,76 @@ export const PATTERNS = {
   pluginStructure: `
 # Plugin-Struktur (AppPlugin Interface)
 
+## ⚠️ Stille Fallen — bevor du anfaengst zu coden, lies das hier
+
+Diese drei Punkte haben in echten Plugin-Entwicklungs-Sessions zusammen 60+ Minuten
+Refactor verursacht. Sie sind nicht offensichtlich aus dem Type-System ableitbar.
+
+### 1. \`crawlEntities\` ↔ \`statOptions\` sind im UI exklusiv
+
+Sobald \`crawlEntities\` exportiert wird UND beim Verbindungstest non-leere Gruppen
+zurueckgibt (\`crawledGroups.length > 0\`), ersetzt der **Entity-Picker** den
+**stat-Picker** — fuer **alle Tile-Groessen**, nicht nur die mit Crawler.
+Es gibt keinen Per-Size-Override.
+
+\`\`\`
+Plugin exportiert crawlEntities → User sieht Entity-Picker im 1x1, 2x1, 2x2
+Plugin exportiert NICHT crawlEntities → User sieht statOptions-Checkboxen
+\`\`\`
+
+**Konsequenz:** Wenn dein 1x1 statOption-Auswahl braucht UND dein 2x2 einen
+Entity-Picker, geht das nicht in einem Plugin. Entscheide bewusst pro Plugin.
+Source: \`core/src/components/dashboard/TileDialog.tsx\` ~line 1574 (\`crawledGroups.length > 0 ? ... : ...\`).
+
+### 2. CONNECTION_KEYS Whitelist — required configFields muessen darauf liegen
+
+Das Dashboard hat eine **hardcodierte Liste** der Keys die als "Connection-Daten"
+gelten und beim Reuse einer AppConnection automatisch geladen werden:
+
+\`\`\`typescript
+const CONNECTION_KEYS = ["apiUrl", "apiKey", "accessToken", "username", "password"];
+\`\`\`
+(Source: \`core/src/lib/actions/tiles.ts:43\`)
+
+**Was passiert wenn du einen anderen \`required: true\` configField definierst
+(z.B. \`apiSecret\`, \`token\`, \`bearer\`):**
+
+- Erste Tile: funktioniert, der User gibt den Wert ein
+- Zweite Tile mit derselben Connection: bricht ab mit \`Missing required config
+  fields: <key>\` weil das Dashboard nur die 5 CONNECTION_KEYS aus der gespeicherten
+  Connection laedt, dein Custom-Field aber nicht
+
+**Regel:** Fuer required Credential-aehnliche Felder NUR \`apiKey\`, \`accessToken\`,
+\`username\`, \`password\` benutzen — nie \`apiSecret\`, \`secret\`, \`token\`, \`bearer\`,
+\`authKey\` o.ae. \`apiUrl\` ist auch in der Liste, aber wird in der UI gesondert behandelt.
+
+Optional/Feature-Fields (\`required: false\`) duerfen jeden Key haben, sie sind
+"Per-Tile" Konfiguration und werden nicht aus der Connection geladen.
+
+\`validate_plugin\` fangt das jetzt automatisch (Rule 31).
+
+### 3. \`showForSizes\` ist DAS Per-Size-Konfigurations-Pattern
+
+Sowohl \`ConfigField\` als auch \`StatOption\` haben ein \`showForSizes?: TileSize[]\`
+Property. Es ist die einzige Art, Felder an Tile-Groessen zu binden:
+
+\`\`\`typescript
+statOptions: [
+  { key: "cpu", label: "CPU", description: "...", defaultEnabled: true,
+    showForSizes: ["1x1"] },  // ← nur im 1x1 Dialog sichtbar
+],
+configFields: [
+  { key: "apiUrl", label: "...", type: "url", required: true },
+  { key: "gauge1", label: "Gauge Links", type: "select", options: [...],
+    showForSizes: ["2x1", "2x2"] },  // ← nur in den Widget-Groessen sichtbar
+],
+\`\`\`
+
+**Faustregel:** Wenn dein Plugin Widgets hat, gehoeren statOptions nach \`["1x1"]\`
+und Widget-Konfiguration in configFields mit \`showForSizes: ["2x1", "2x2"]\`.
+
+---
+
 ## Plugin Manifest (plugin.manifest.json)
 
 Jedes Plugin MUSS ein Manifest haben (Pflicht fuer ZIP-Upload):
@@ -1970,6 +2040,61 @@ const processedItems = stats.items.map(item => ({  // Laeuft bei jedem Render!
 - **Plugin-Code schlank:** < 200 Zeilen fuer einfache Plugins, < 400 fuer komplexe
 - **Keine externen Dependencies:** Nur Typen aus dem Framework importieren
 - **Shared Components nutzen:** WidgetHeader, CircularProgress, SparklineChart, etc.
+
+## Anti-Pattern: TLS self-signed Zertifikate aus Plugin-Code
+
+Wenn das Plugin gegen einen Service mit **self-signed Cert** (OPNsense, Unraid,
+Synology, viele Firewalls) fetchen muss, hat \`fetch()\` (das undici nutzt) ein
+echtes Problem:
+
+\`\`\`typescript
+// FALSCH: blockt bis Timeout, kein klarer Error
+const res = await fetch("https://opnsense.local/api/...");
+
+// FALSCH: undici Agent funktioniert nicht ueber Plugin-Bundling
+import { Agent } from "undici";
+const agent = new Agent({ connect: { rejectUnauthorized: false } });
+const res = await fetch(url, { dispatcher: agent });
+// Next.js bundled undici nicht als ESM fuer Plugin-Code → schlaegt zur Laufzeit fehl
+\`\`\`
+
+**Loesung:** \`node:https\` direkt benutzen, NICHT \`fetch\`.
+
+\`\`\`typescript
+async function pluginFetch(url: string, opts: { headers?: Record<string,string>; timeoutMs?: number } = {}) {
+  const parsed = new URL(url);
+  const isHttps = parsed.protocol === "https:";
+  const lib = isHttps ? await import("node:https") : await import("node:http");
+
+  return new Promise<{ status: number; body: string }>((resolve, reject) => {
+    const req = lib.request(
+      {
+        hostname: parsed.hostname,
+        port: parsed.port || (isHttps ? 443 : 80),
+        path: parsed.pathname + parsed.search,
+        method: "GET",
+        headers: opts.headers,
+        rejectUnauthorized: false, // der entscheidende Schalter
+      },
+      (res) => {
+        let body = "";
+        res.on("data", (c) => (body += c));
+        res.on("end", () => resolve({ status: res.statusCode ?? 0, body }));
+      },
+    );
+    req.on("error", reject);
+    req.setTimeout(opts.timeoutMs ?? 5000, () => req.destroy(new Error("timeout")));
+    req.end();
+  });
+}
+\`\`\`
+
+**Wann anwenden:** Service hat nur self-signed HTTPS, kein gueltiges CA-Cert.
+**Sicherheits-Hinweis:** \`rejectUnauthorized: false\` deaktiviert Cert-Validierung
+KOMPLETT — nutze es nur fuer LAN-Services die der User selbst betreibt.
+
+Referenz: \`core/src/plugins/community/opnsense/types.ts\` hat eine voll
+kommentierte Implementation dieses Patterns.
 `,
 
   checklist: `

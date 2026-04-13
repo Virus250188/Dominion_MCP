@@ -84,7 +84,7 @@ export function registerKnowledgeTools(server: McpServer): void {
   // ── get_data_contracts ────────────────────────────────────────────────
   server.tool(
     "get_data_contracts",
-    "[Phase 1: Lernen] Returns TypeScript data contracts: PluginStats, StatItem, ConfigField, StatOption, fetchStats pattern, widgetData, colors. Call BEFORE writing code.",
+    "[Phase 1: Lernen] Returns TypeScript data contracts: PluginStats, StatItem, ConfigField, StatOption, fetchStats pattern, widgetData, colors. **Includes a 'Stille Fallen' section** documenting the crawlEntities↔statOptions UI exclusivity, the CONNECTION_KEYS whitelist (apiUrl/apiKey/accessToken/username/password) that gates connection-reuse, and showForSizes per-size config. Call BEFORE writing code.",
     async () => {
       const text = [
         PATTERNS.pluginStructure,
