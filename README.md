@@ -6,7 +6,7 @@ An MCP (Model Context Protocol) server that helps AI agents develop Enhanced App
 
 This MCP server acts as a **complete knowledge base and toolkit** for AI coding assistants. When connected, the agent can build a production-ready plugin **without ever needing access to the Dashboard source code** -- the result is a ZIP file ready for upload.
 
-- **Knowledge Tools** -- Framework architecture, tile specs, data contracts, widget patterns, rule-based notification system, shared utilities & components source code
+- **Knowledge Tools** -- Framework architecture, runtime plugin loader, tile specs, data contracts, widget patterns, rule-based notification system, shared utilities & components source code
 - **Scaffold Tools** -- Generate complete plugin code, widget components, manifests, and READMEs
 - **Validation Tools** -- Validate plugin structure, stats output, and render hints against 30+ rules (incl. notification rule/tag consistency)
 - **Test Tools** -- Standalone TypeScript syntax checks (no Dashboard access needed)
@@ -98,7 +98,7 @@ The agent will:
 | `get_hello_world_example` | Complete minimal plugin example with manifest + code |
 | `get_shared_utilities` | Source code of Dashboard utility functions (formatBytes, etc.) |
 | `get_shared_components` | Source code of shared widget components (WidgetHeader, etc.) |
-| `get_deployment_guide` | ZIP upload, manual install, Docker, upload validation rules |
+| `get_deployment_guide` | ZIP upload (hot-load, no restart), manual install, esbuild config, known limitations |
 
 ### Scaffold (4 tools)
 
@@ -153,8 +153,8 @@ my-plugin/
 - **Widget Components**: Custom React components with WidgetHeader, shared UI components
 - **Entity Crawling**: For services with selectable entities (smart home, containers)
 - **Notifications**: Rule-based notification system. Plugins declare `supportsNotifications: true` + a `notificationRules` catalog, and implement `checkNotifications()` to detect state changes at poll time. Each emitted notification's `tag` must match a rule ID — the framework filters by the user's per-source `ruleConfig.enabledRules` (unknown tags are silently dropped). Users opt in explicitly via the TileDialog "enable notifications" toggle — no auto-provisioning. Webhook-based notifications are supported as a separate source type.
-- **ZIP Upload**: Package and upload plugins via Dashboard Settings > Plugins > Upload
-- **Auto-Discovery**: Drop plugin folder + restart -- no core files to edit
+- **ZIP Upload + Hot-Load**: Upload via Dashboard Settings > Plugins > Upload -- plugin is **immediately available** (no restart needed). esbuild compiles TypeScript to ESM at runtime.
+- **Runtime Loader**: Plugins are compiled and loaded at runtime via esbuild + `dynamic import()`. `instrumentation.ts` auto-loads existing plugins on container start.
 
 ### Tile Sizes = Roles
 
@@ -170,8 +170,8 @@ Users can have **multiple tiles** of the same app (e.g., a 1x1 for quick status 
 
 ### Installation Methods
 
-1. **Dashboard UI (recommended):** Settings > Plugins > Upload > Select ZIP
-2. **Manual:** Unzip into `src/plugins/community/`, restart server
+1. **Dashboard UI (recommended):** Settings > Plugins > Upload > Select ZIP -- **no restart needed**, plugin is hot-loaded immediately
+2. **Manual:** Unzip into `/data/plugins/` (Docker) or `src/plugins/community/` (bare metal), restart server
 
 Works with Docker, bare metal, and local development -- no special handling needed.
 
@@ -179,10 +179,10 @@ Works with Docker, bare metal, and local development -- no special handling need
 
 ```
 src/
-  index.ts                # Server entry point (v2.3.1)
+  index.ts                # Server entry point (v2.4.0)
   data/
-    framework.ts          # Core architecture, lifecycle, API endpoints, notifications
-    patterns.ts           # Code patterns, notifications, shared utilities, anti-patterns
+    framework.ts          # Core architecture, runtime loader lifecycle, API endpoints, notifications
+    patterns.ts           # Code patterns, runtime registration, notifications, shared utilities
     tile-specs.ts         # Tile size specifications with ASCII diagrams
     components.ts         # Widget shared component source code (1:1 with Dashboard)
   tools/
@@ -210,7 +210,7 @@ npm start
 
 ## Knowledge Sync
 
-The hardcoded knowledge in `src/data/` is synced against the Dashboard source code. Each file has a `LAST_SYNCED` timestamp. Current sync: **2026-04-13** (Dashboard v1.3.0-beta — rule-based notification API).
+The hardcoded knowledge in `src/data/` is synced against the Dashboard source code. Each file has a `LAST_SYNCED` timestamp. Current sync: **2026-04-16** (Dashboard v1.4.2-beta — runtime plugin loader, globalThis registry, esbuild hot-load).
 
 ## Related Projects
 
