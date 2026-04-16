@@ -2,11 +2,13 @@
 // Complete documentation of the Dominion Dashboard Enhanced App system.
 // Served to AI agents via MCP tools to guide plugin development.
 //
-// LAST_SYNCED: 2026-04-13
-// DASHBOARD_VERSION: 1.3.0-beta
+// LAST_SYNCED: 2026-04-16
+// DASHBOARD_VERSION: 1.4.2-beta
 // SOURCE: Dashboard/src/plugins/types.ts, registry.ts, utils.ts, validator.ts,
+//         src/plugins/runtime-loader.ts, src/instrumentation.ts,
 //         src/lib/notifications/plugin-checker.ts, src/lib/actions/notifications.ts,
-//         src/components/dashboard/TileDialog.tsx
+//         src/components/dashboard/TileDialog.tsx,
+//         src/app/api/plugins/[pluginId]/metadata/route.ts
 // ────────────────────────────────────────────────────────────────────────────
 
 export const FRAMEWORK = {
@@ -53,10 +55,12 @@ entweder in \`src/plugins/community/\` ablegen ODER ueber
   Metadaten, Konfigurationsfelder, Statistik-Optionen und Laufzeit-Funktionen
   exportiert. Plugins werden beim Start ueber die Registry validiert und registriert.
 
-- **Community-System (Auto-Discovery):** Neue Plugins werden als Community Plugins
-  erstellt. Workflow: Plugin-Ordner bauen mit standardisierten Exports
-  (\`plugin\`, \`widget\`, \`widgetName\`) - Ordner in \`src/plugins/community/\` ablegen -
-  Server neustarten - fertig. Das Plugin wird automatisch erkannt.
+- **Community-System (Runtime Loader):** Neue Plugins werden als Community Plugins
+  erstellt. Workflow: Plugin-Ordner als ZIP bauen mit standardisierten Exports
+  (\`plugin\`, \`widget\`, \`widgetName\`) - ZIP ueber **Einstellungen > Plugins > Upload**
+  hochladen - esbuild kompiliert zur Laufzeit - Plugin ist **sofort verfuegbar**
+  (kein Server-Restart noetig). Beim Container-Start laedt \`instrumentation.ts\`
+  alle vorhandenen Plugins aus \`/data/plugins/\` automatisch.
   Keine Core-Dateien bearbeiten, keine Barrel-Dateien editieren.
 
 - **KEINE eigenen API-Routes:** Plugins erstellen KEINE eigenen \`/api/\` Routes.
@@ -137,21 +141,31 @@ entweder in \`src/plugins/community/\` ablegen ODER ueber
 \`\`\`
 src/plugins/
   types.ts              # AppPlugin Interface und alle Typen
-  registry.ts           # Plugin-Registry mit Validierung beim Laden
+  registry.ts           # Plugin-Registry (globalThis Singleton) mit Validierung
+  runtime-loader.ts     # Runtime Loader: esbuild compile + dynamic import + Registry
   validator.ts          # Laufzeit-Validierung (validatePlugin + validateStats)
   utils.ts              # Shared Utilities (getVisibleStats, normalizeUrl, etc.)
   manifest.ts           # ZIP-Validierung (PluginManifest Interface, validatePluginZip)
   builtin/              # Builtin Plugins (vom Projekt mitgeliefert)
     emby/index.ts       # Referenz-Implementation (einziges Builtin)
-  community/            # Community Plugins (von externen Entwicklern, Auto-Discovery)
-    index.ts            # AUTO-GENERATED: wird beim Start/Build automatisch generiert
+  community/            # Community Plugins (von externen Entwicklern)
+    index.ts            # AUTO-GENERATED: Barrel fuer Build-Time Plugins
     {plugin-id}/        # Ein Ordner pro Plugin (Ordnername = metadata.id)
       plugin.manifest.json  # Pflicht: Manifest mit id, name, version, author
       index.ts          # Pflicht-Exports: plugin, widget, widgetName
       {Name}Widget.tsx   # Optional: Widget-Komponente
 
+src/instrumentation.ts    # Next.js Startup-Hook: scannt /data/plugins/, kompiliert+laedt alle
+
+src/app/api/plugins/
+  upload/route.ts         # ZIP-Upload mit Hot-Load (kein Restart)
+  [pluginId]/metadata/route.ts  # Plugin-Metadaten API fuer Client-Zugriff
+
+src/hooks/
+  usePluginMetadata.ts    # React Hook: statische Registry + API Fallback fuer Runtime-Plugins
+
 src/components/widgets/
-  registry.ts           # Widget-Registry (registerWidget/getWidget + auto-import communityWidgets)
+  registry.ts           # Widget-Registry (globalThis Singleton, registerWidget/getWidget)
   shared/               # Wiederverwendbare Widget-Bausteine
     WidgetHeader.tsx     # Standard-Widget-Kopfzeile mit Status-Punkt
     CircularProgress.tsx # Kreisfoermiger Fortschrittsbalken
@@ -170,7 +184,8 @@ src/components/widgets/
 | \`/api/enhanced/crawl\` | POST | Entities crawlen (\`{ enhancedType, config }\`) | Ja | Ja |
 | \`/api/enhanced/oauth/state\` | POST | HMAC-signierten OAuth State generieren (CSRF-Schutz) | Ja | Nein |
 | \`/api/enhanced/oauth/callback\` | GET | OAuth Callback (verifiziert HMAC-Signatur, ruft \`exchangeToken\` auf, speichert Tokens) | Ja | Nein |
-| \`/api/plugins/upload\` | POST | ZIP-Upload eines Community Plugins | Ja | Ja |
+| \`/api/plugins/upload\` | POST | ZIP-Upload + Hot-Load eines Community Plugins (kein Restart) | Ja | Ja |
+| \`/api/plugins/[pluginId]/metadata\` | GET | Plugin-Metadaten fuer Client-Zugriff (Runtime-Plugins) | Ja | Nein |
 | \`/api/notifications\` | POST | Externe Services senden Notifications (X-Notification-Key Header) | API Key | Ja |
 | \`/api/notifications\` | GET | Dashboard laedt Notifications | Ja | Nein |
 | \`/api/notifications/[id]/ack\` | POST | Notification bestaetigen | Ja | Nein |
@@ -189,9 +204,13 @@ src/components/widgets/
   lifecycle: `
 # Plugin Lifecycle - 3 Phasen
 
-## Phase 1: Registrierung (Server-Start)
+## Phase 1: Registrierung
 
-1. Das Plugin-Modul wird in \`registry.ts\` importiert (builtin oder community)
+Es gibt zwei Registrierungs-Pfade:
+
+### 1a. Builtin Plugins (Build-Time, beim Server-Start)
+
+1. Das Plugin-Modul wird in \`registry.ts\` importiert
 2. \`registerPlugin()\` ruft \`validatePlugin()\` auf und prueft die Struktur:
    - \`metadata.id\` muss ein nicht-leerer String sein
    - \`metadata.name\` muss ein nicht-leerer String sein
@@ -203,17 +222,29 @@ src/components/widgets/
 4. Bei Fehler: Plugin wird uebersprungen, Fehler wird in die Konsole geloggt
 5. Nach Registrierung: Icon-Map wird automatisch aus allen Plugins gebaut
 
+### 1b. Community Plugins (Runtime, Hot-Load)
+
+Community Plugins werden **zur Laufzeit kompiliert und geladen** — ohne Container-Restart:
+
+1. **Upload:** ZIP wird hochgeladen → esbuild kompiliert \`.ts\`/\`.tsx\` zu ESM Bundle
+   (\`dist/index.mjs\`) → \`dynamic import()\` laedt das Modul → Plugin ist sofort
+   in der Registry verfuegbar
+2. **Container-Start:** \`instrumentation.ts\` scannt \`/data/plugins/\` und
+   kompiliert+laedt alle vorhandenen Plugins automatisch
+3. **Loeschen:** Plugin wird sofort aus der Registry entfernt, Dateien geloescht
+4. **Kein Restart noetig:** \`needsRestart\` ist immer \`false\` in der Upload-Response
+
+### Registry: globalThis Singleton
+
+Die Plugin- und Widget-Registries nutzen \`globalThis\` statt module-lokale Maps.
+Next.js evaluiert Server-Module mehrfach (verschiedene Request-Handler) — ohne
+\`globalThis\` gingen runtime-geladene Plugins nach der ersten Request-Verarbeitung verloren.
+
 \`\`\`typescript
-// registry.ts - Registrierungsprozess
-import { embyPlugin } from "./builtin/emby";
-
-import { communityPlugins } from "./community";
-
-const builtinPlugins: AppPlugin[] = [
-  embyPlugin,
-];
-
-const registry = new Map<string, AppPlugin>();
+// registry.ts - globalThis Singleton Pattern
+const globalForPlugins = globalThis as unknown as { pluginRegistry: Map<string, AppPlugin> };
+const registry = globalForPlugins.pluginRegistry ?? new Map<string, AppPlugin>();
+globalForPlugins.pluginRegistry = registry;
 
 function registerPlugin(plugin: AppPlugin, source: string): boolean {
   const errors = validatePlugin(plugin);
@@ -229,16 +260,9 @@ function registerPlugin(plugin: AppPlugin, source: string): boolean {
   return true;
 }
 
-// Register builtin + community plugins
-for (const plugin of builtinPlugins) registerPlugin(plugin, "builtin");
-for (const plugin of communityPlugins) registerPlugin(plugin, "community");
-
-// Auto-generated icon map from all registered plugins
-const pluginIconMap = new Map<string, string>();
-for (const plugin of registry.values()) {
-  pluginIconMap.set(plugin.metadata.name, plugin.metadata.icon);
-  pluginIconMap.set(plugin.metadata.name.toLowerCase(), plugin.metadata.icon);
-}
+// Runtime-spezifische Funktionen:
+function registerCommunityPlugin(plugin: AppPlugin): boolean { ... }
+function unregisterCommunityPlugin(pluginId: string): boolean { ... }
 \`\`\`
 
 ## Phase 2: Konfiguration (Benutzer-Interaktion)
@@ -345,10 +369,14 @@ Jedes Plugin ist vollstaendig eigenstaendig:
 - Shared Utilities aus \`src/plugins/utils.ts\` importieren (getVisibleStats, normalizeUrl, etc.)
 - Kein Shared State zwischen Plugins
 
-## Registry-Pattern
+## Registry-Pattern (globalThis Singleton)
+
+Beide Registries nutzen \`globalThis\` damit runtime-geladene Plugins nicht
+bei der naechsten Request-Verarbeitung verloren gehen (Next.js evaluiert
+Server-Module mehrfach).
 
 \`\`\`typescript
-// Plugin-Registry: src/plugins/registry.ts
+// Plugin-Registry: src/plugins/registry.ts (globalThis Singleton)
 getPlugin(id: string): AppPlugin | undefined
 getAllPlugins(): AppPlugin[]
 getPluginsByCategory(category: string): AppPlugin[]
@@ -364,11 +392,13 @@ getPluginCatalog(): Array<{
   supportedSizes: TileSize[];
 }>
 getPluginIconSlug(appName: string): string | undefined  // Auto-resolved from registry
+registerCommunityPlugin(plugin: AppPlugin): boolean     // Runtime: Plugin hinzufuegen
+unregisterCommunityPlugin(pluginId: string): boolean    // Runtime: Plugin entfernen
 
-// Widget-Registry: src/components/widgets/registry.ts
+// Widget-Registry: src/components/widgets/registry.ts (globalThis Singleton)
 registerWidget(name: string, component: ComponentType<WidgetProps>): void
 getWidget(name: string): ComponentType<WidgetProps> | undefined
-// Community widgets are auto-registered from communityWidgets map
+unregisterWidget(name: string): void                    // Runtime: Widget entfernen
 \`\`\`
 
 ## Konfigurationsspeicherung
@@ -873,20 +903,24 @@ identisch in allen Umgebungen.
 
 ## Plugin-Installation (Sicht des Users)
 
-### Weg 1: ZIP-Upload ueber Dashboard UI (empfohlen)
+### Weg 1: ZIP-Upload ueber Dashboard UI (empfohlen — Hot-Load, kein Restart)
 1. Dashboard oeffnen (z.B. \`http://192.168.1.100:3000\`)
 2. **Einstellungen** > **Plugins** > **Upload**
 3. ZIP-Datei auswaehlen (max 5 MB)
 4. Dashboard validiert: Manifest, Exports, Widget-Dateien
-5. Bei Erfolg: Plugin wird nach \`src/plugins/community/{id}/\` extrahiert
-6. **Server neustarten** (Button erscheint nach Upload)
-7. Plugin erscheint im Tile-Dialog unter der jeweiligen Kategorie
+5. Bei Erfolg: esbuild kompiliert \`.ts\`/\`.tsx\` zu ESM Bundle (\`dist/index.mjs\`)
+6. \`dynamic import()\` laedt das Modul → Plugin ist **sofort in der Registry**
+7. **Kein Restart noetig** — \`needsRestart\` ist immer \`false\` in der Upload-Response
+8. Plugin erscheint sofort im Tile-Dialog unter der jeweiligen Kategorie
 
 ### Weg 2: Manuelles Ablegen (nur bei Dateizugang)
 1. ZIP entpacken
-2. Ordner nach \`src/plugins/community/{id}/\` kopieren
+2. Ordner nach \`/data/plugins/{id}/\` kopieren (Docker) oder \`src/plugins/community/{id}/\` (Bare Metal)
 3. Server neustarten (\`npm run dev\` oder Docker Container neustarten)
-4. Auto-Discovery erkennt das Plugin automatisch
+4. \`instrumentation.ts\` erkennt und laedt das Plugin beim naechsten Start
+
+**Hinweis:** Manuelles Ablegen erfordert weiterhin einen Restart.
+Fuer sofortige Aktivierung den ZIP-Upload ueber die UI verwenden.
 
 ## Wichtig fuer Plugin-Entwickler
 
@@ -901,6 +935,28 @@ identisch in allen Umgebungen.
   Docker-Netzwerk erreichbar sein (z.B. \`http://emby:8096\` statt \`http://localhost:8096\`).
   Das ist aber Sache des Users bei der Konfiguration, nicht des Plugins.
 
+## esbuild Compile-Konfiguration (Runtime Loader)
+
+Plugins werden beim Upload automatisch mit esbuild kompiliert:
+
+| Setting | Wert |
+|---------|------|
+| Format | ESM (\`.mjs\`) |
+| Platform | Node 22 |
+| Bundle | Ja — alle Imports werden aufgeloest |
+| \`@/*\` Pfade | Ueber \`tsconfigRaw\` aufgeloest (\`@/*\` → \`src/*\`) |
+| Externals | \`react\`, \`react-dom\`, \`react/jsx-runtime\`, \`lucide-react\`, \`clsx\`, \`tailwind-merge\`, \`next\`, \`next/*\` |
+
+**Fuer Plugin-Entwickler bedeutet das:**
+- \`@/plugins/types\` und \`@/plugins/utils\` werden in den Plugin-Bundle **eingebettet**
+  — Imports funktionieren wie gewohnt
+- \`@/lib/utils\` (cn), \`@/components/widgets/shared/*\` werden ebenfalls eingebettet
+  — alle \`@/\`-Imports funktionieren
+- \`react\`, \`lucide-react\` etc. werden als **external** behandelt und zur Laufzeit
+  aus dem Dashboard \`node_modules\` geladen
+- Im Docker-Container existiert ein Symlink
+  \`/data/plugins/node_modules → /app/node_modules\` fuer die External-Aufloesung
+
 ## ZIP-Struktur fuer Upload
 
 \`\`\`
@@ -913,8 +969,7 @@ mein-plugin.zip
 
 **EMPFOHLEN:** Dateien auf ROOT-Level der ZIP. Ein einzelner Wrapper-Ordner
 wird automatisch erkannt und entfernt (Prefix-Stripping).
-Das Dashboard extrahiert automatisch nach \`src/plugins/community/{manifest.id}/\`
-basierend auf der ID im Manifest.
+Das Dashboard extrahiert automatisch nach dem Manifest \`id\` Feld.
 
 ## Validierung beim Upload
 
@@ -931,5 +986,16 @@ Das Dashboard prueft beim ZIP-Upload:
    (z.B. \`import { X } from "@/components/widgets/shared/X"\`)
 9. ID kollidiert nicht mit bestehenden Plugins
 10. Optional: \`minDashboardVersion\` Kompatibilitaet
+
+## Bekannte Einschraenkungen (Runtime Loader)
+
+- **Widget-Rendering:** Runtime-Plugins registrieren Widgets server-seitig, aber das
+  Client-Bundle enthaelt sie nicht. 2x1/2x2 Tiles zeigen Stats statt Custom-Widget.
+  Builtin-Plugins und beim Build eingebundene Community-Plugins sind nicht betroffen.
+- **Plugin-Discovery am Client:** \`getAllPlugins()\` auf dem Client enthaelt keine
+  Runtime-Plugins. Die Tile-Dialog-Liste kommt vom Server (funktioniert), aber
+  Auto-Detection per Titel und der Plugin-Dropdown nutzen die Client-Registry.
+- **ESM Cache:** Jeder Re-Upload erzeugt einen neuen Modul-Eintrag im V8 ESM-Graph
+  (Cache-Bust via \`?t=\` Query-Parameter). Bei seltenen Re-Uploads vernachlaessigbar.
 `,
 } as const;

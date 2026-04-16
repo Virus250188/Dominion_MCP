@@ -2,9 +2,9 @@
 // Code patterns, anti-patterns, and implementation guidelines for Enhanced Apps.
 // Served to AI agents via MCP tools to guide correct plugin implementation.
 //
-// LAST_SYNCED: 2026-04-13
-// DASHBOARD_VERSION: 1.3.0-beta
-// SOURCE: Dashboard/src/plugins/types.ts, utils.ts, builtin/emby/index.ts,
+// LAST_SYNCED: 2026-04-16
+// DASHBOARD_VERSION: 1.4.2-beta
+// SOURCE: Dashboard/src/plugins/types.ts, utils.ts, runtime-loader.ts, builtin/emby/index.ts,
 //         src/lib/notifications/plugin-checker.ts, src/lib/actions/notifications.ts,
 //         src/components/dashboard/TileDialog.tsx, src/components/settings/NotificationSourceManager.tsx
 // ────────────────────────────────────────────────────────────────────────────
@@ -1215,19 +1215,16 @@ interface WidgetHeaderProps {
 
 ## Widget-Registrierung
 
-### Fuer Community Plugins (empfohlen):
+### Fuer Community Plugins (automatisch via Runtime Loader):
 
-In \`src/plugins/community/index.ts\` hinzufuegen:
+Der Runtime Loader registriert Community Widgets automatisch beim Upload:
+- Plugin exportiert \`widget\` und \`widgetName\` in der \`index.ts\`
+- Beim Kompilieren erkennt der Runtime Loader die Exports und registriert das Widget
+- **Keine manuellen Eintraege in \`community/index.ts\` oder \`widgets/registry.ts\` noetig**
 
-\`\`\`typescript
-export { MeinPluginWidget } from "./meinservice/MeinPluginWidget";
-
-export const communityWidgets: Record<string, ComponentType<unknown>> = {
-  "MeinPluginWidget": MeinPluginWidget,
-};
-\`\`\`
-
-Die Widget-Registry importiert \`communityWidgets\` automatisch und registriert alle Eintraege.
+**Bekannte Einschraenkung:** Runtime-geladene Widgets werden nur **server-seitig**
+registriert. Das Client-Bundle enthaelt sie nicht — 2x1/2x2 Tiles zeigen
+daher Stats statt Custom-Widget bei runtime-geladenen Plugins.
 
 ### Fuer Builtin Plugins:
 
@@ -1259,33 +1256,43 @@ Der Name muss EXAKT mit \`renderHints[size].widgetComponent\` uebereinstimmen.
 
 ## KEINE Core-Dateien bearbeiten — vollstaendig automatisch!
 
-\`src/plugins/community/index.ts\` ist **AUTO-GENERATED** durch
-\`scripts/generate-community-plugins.ts\` (bzw. \`npm run generate:plugins\`).
-Diese Datei NICHT manuell editieren — Aenderungen werden ueberschrieben.
+Community Plugins werden zur Laufzeit kompiliert und geladen (Runtime Loader).
+Es muessen **keine** Core-Dateien bearbeitet werden.
 
-### Installation per ZIP-Upload (empfohlen)
+### Installation per ZIP-Upload (empfohlen — Hot-Load, kein Restart)
 
 1. Plugin als ZIP erstellen (via \`create_plugin_zip\` Tool)
 2. Dashboard: **Einstellungen > Plugins > Upload**
-3. Dashboard validiert, extrahiert und registriert automatisch
-4. Server neustarten — fertig
+3. Dashboard validiert, kompiliert via esbuild und laedt via \`dynamic import()\`
+4. Plugin ist **sofort verfuegbar** — kein Server-Restart noetig
 
-### Installation per manuelles Ablegen
+### Installation per manuelles Ablegen (erfordert Restart)
 
-1. Plugin-Ordner nach \`src/plugins/community/{plugin-id}/\` kopieren
-2. \`npm run generate:plugins\` ausfuehren (oder Server neustarten)
-3. Auto-Discovery erkennt das Plugin und generiert die Barrel-Datei neu
+1. Plugin-Ordner nach \`/data/plugins/{plugin-id}/\` kopieren (Docker)
+   oder \`src/plugins/community/{plugin-id}/\` (Bare Metal)
+2. Server neustarten — \`instrumentation.ts\` erkennt und laedt das Plugin beim Start
+
+**Hinweis:** Die Barrel-Datei \`community/index.ts\` existiert weiterhin fuer
+Build-Time Community Plugins, wird aber von runtime-geladenen Plugins nicht benoetigt.
 
 ### Das war's! Keine weiteren Core-Dateien noetig.
 
-- **Kein \`registry.ts\` bearbeiten** — Community Plugins werden automatisch importiert
+- **Kein \`registry.ts\` bearbeiten** — Community Plugins werden automatisch registriert
 - **Kein \`icons.ts\` bearbeiten** — Icons werden automatisch aus metadata.icon aufgeloest
 - **Kein \`widgets/registry.ts\` bearbeiten** — Community Widgets werden automatisch registriert
-- **Kein \`community/index.ts\` bearbeiten** — wird automatisch generiert
+- **Kein \`community/index.ts\` bearbeiten** — Runtime-Plugins brauchen sie nicht
 
-## Validierung beim Start
+## Registry: globalThis Singleton
 
-Nach der Registrierung prueft \`validatePlugin()\` automatisch:
+Die Plugin-Registry nutzt \`globalThis\` statt module-lokale Maps, damit
+runtime-geladene Plugins nicht bei der naechsten Request-Verarbeitung verloren gehen
+(Next.js evaluiert Server-Module mehrfach). Funktionen:
+- \`registerCommunityPlugin(plugin)\` — Fuegt Runtime-Plugin zur Registry hinzu
+- \`unregisterCommunityPlugin(pluginId)\` — Entfernt Plugin bei Loeschung
+
+## Validierung
+
+Sowohl beim Upload als auch beim Container-Start prueft \`validatePlugin()\` automatisch:
 - metadata.id ist nicht-leerer String
 - metadata.name ist nicht-leerer String
 - metadata.color ist gueltiges Hex (#XXXXXX)
