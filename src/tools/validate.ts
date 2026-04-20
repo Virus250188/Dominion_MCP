@@ -248,14 +248,108 @@ function validatePlugin(params: {
   }
 
   // 9. If any renderHint has layout: "widget", check it also has widgetComponent
-  const widgetHints = [...pluginCode.matchAll(/["']\dx\d["']\s*:\s*\{([^}]*)\}/g)];
+  const renderHintBlocks: Record<string, string> = {};
+  const widgetHints = [...pluginCode.matchAll(/["'](\dx\d)["']\s*:\s*\{([^}]*)\}/g)];
   for (const hint of widgetHints) {
-    const hintBody = hint[1];
+    const size = hint[1];
+    const hintBody = hint[2];
+    renderHintBlocks[size] = hintBody;
     if (/layout\s*:\s*["']widget["']/.test(hintBody)) {
       if (!/widgetComponent\s*:/.test(hintBody)) {
         errors.push(err(
           `renderHint with layout "widget" is missing widgetComponent.`,
           `Ergaenze: widgetComponent: "MeinWidget"  // Name der exportierten Widget-Komponente`,
+        ));
+      }
+    }
+  }
+
+  // ── 32-36. Tile-Size-Semantik (K3) ────────────────────────────────────
+  // Miguels Konvention: 1x1 = max 3 Werte, keine Widgets. 2x1 = expliziter
+  // Modus-Schalter zwischen Stats und Mini-Widget. 2x2 = EIN fokussiertes
+  // Widget, kein Stats-Dump. Siehe src/data/patterns.ts (tile-modus).
+
+  const hint1x1 = renderHintBlocks["1x1"] ?? "";
+  const hint2x1 = renderHintBlocks["2x1"] ?? "";
+  const hint2x2 = renderHintBlocks["2x2"] ?? "";
+
+  // 34. 1x1 darf kein Widget haben
+  if (hint1x1) {
+    const has1x1WidgetLayout = /layout\s*:\s*["']widget["']/.test(hint1x1);
+    const has1x1WidgetComponent = /widgetComponent\s*:/.test(hint1x1);
+    if (has1x1WidgetLayout) {
+      errors.push(err(
+        `renderHints["1x1"] hat layout "widget" — 1x1-Tiles duerfen kein Widget rendern (K3).`,
+        `1x1 ist auf maximal 3 Werte/Status beschraenkt (Zahlen, Texte, Status). Kein Bild, kein Widget, keine Animation.\nAendere zu: "1x1": { maxStats: 3, layout: "compact" }\nWenn du ein Widget willst, nutze 2x1 mit displayMode oder 2x2.`,
+      ));
+    }
+    if (has1x1WidgetComponent) {
+      errors.push(err(
+        `renderHints["1x1"] hat widgetComponent — 1x1-Tiles rendern keine Widgets (K3).`,
+        `Entferne widgetComponent aus renderHints["1x1"]. Der Widget-Export gehoert nur an 2x1 (im Widget-Modus) oder 2x2.`,
+      ));
+    }
+  }
+
+  // 35. 1x1 max 3 defaultEnabled statOptions
+  // (maxStats: 3 ist der harte Cap; mehr als 3 Defaults enabled waere
+  // irrefuehrend, weil der User sie nicht gleichzeitig sehen kann)
+  const statOptionsBlock = extractArrayBlock(pluginCode, "statOptions");
+  if (statOptionsBlock && hint1x1) {
+    const defaultEnabledFor1x1 = countDefaultEnabledForSize(statOptionsBlock, "1x1");
+    if (defaultEnabledFor1x1 > 3) {
+      errors.push(err(
+        `statOptions haben ${defaultEnabledFor1x1} Eintraege mit defaultEnabled:true fuer 1x1, erlaubt sind maximal 3 (K3).`,
+        `1x1-Tiles zeigen maximal 3 Werte. Setze defaultEnabled:false bei ueberschuessigen Stats, oder beschraenke via showForSizes:["2x1","2x2"] auf groessere Tiles.`,
+      ));
+    }
+  }
+
+  // 32. 2x1 mit Widget-Capability muss displayMode-Select-Field haben
+  if (hint2x1) {
+    const has2x1WidgetLayout = /layout\s*:\s*["']widget["']/.test(hint2x1);
+    const has2x1Dynamic = /layout\s*:\s*["']dynamic["']/.test(hint2x1);
+    const has2x1WidgetComponent = /widgetComponent\s*:/.test(hint2x1);
+    const needsDisplayMode = has2x1WidgetLayout || has2x1Dynamic || has2x1WidgetComponent;
+    if (needsDisplayMode) {
+      const displayModeField = findConfigField(pluginCode, "displayMode");
+      const hasSelectType = displayModeField && /type\s*:\s*["']select["']/.test(displayModeField);
+      const hasShowForSizes2x1 = displayModeField && /showForSizes\s*:\s*\[[^\]]*["']2x1["']/.test(displayModeField);
+      if (!displayModeField || !hasSelectType || !hasShowForSizes2x1) {
+        errors.push(err(
+          `2x1 mit Widget-Capability braucht ein displayMode-Select-configField mit showForSizes:["2x1"] (K3).`,
+          `Ergaenze in configFields:\n{\n  key: "displayMode",\n  label: "Anzeige",\n  type: "select",\n  options: [\n    { value: "stats", label: "Werte" },\n    { value: "widget", label: "Mini-Widget" },\n  ],\n  defaultValue: "stats",\n  showForSizes: ["2x1"],\n}\n\nUnd setze renderHints["2x1"].layout auf "dynamic" (das Dashboard switcht dann per displayMode zwischen Stats und Widget).`,
+        ));
+      }
+    }
+  }
+
+  // 33. 2x1-Feature-Fields (showForSizes:["2x1"]) sollten showWhen benutzen
+  // damit die UI sie nur im passenden Modus zeigt
+  const configFieldBlocks = extractConfigFieldBlocks(pluginCode);
+  for (const block of configFieldBlocks) {
+    const key = block.key;
+    const body = block.body;
+    const onlyFor2x1 = /showForSizes\s*:\s*\[\s*["']2x1["']\s*\]/.test(body);
+    const hasShowWhen = /showWhen\s*:/.test(body);
+    if (onlyFor2x1 && !hasShowWhen && key !== "displayMode") {
+      warnings.push(warn(
+        `configField "${key}" ist nur fuer 2x1 aktiv, hat aber kein showWhen — erscheint in Stats- und Widget-Modus gleichzeitig.`,
+        `Gate das Feld gegen den 2x1-Modus:\n  showWhen: { displayMode: "widget" }  // nur im Widget-Modus\nOder: showWhen: { displayMode: "stats" }  // nur im Stats-Modus\nSeit Core showWhen-Support (feature/configfield-showwhen-dynamic-layout).`,
+      ));
+    }
+  }
+
+  // 36. 2x2 ohne widgetComponent + viele defaultEnabled Stats = Stats-Dump
+  if (hint2x2) {
+    const has2x2WidgetComponent = /widgetComponent\s*:/.test(hint2x2);
+    const has2x2WidgetLayout = /layout\s*:\s*["'](widget|dynamic)["']/.test(hint2x2);
+    if (!has2x2WidgetComponent && !has2x2WidgetLayout && statOptionsBlock) {
+      const defaultEnabledFor2x2 = countDefaultEnabledForSize(statOptionsBlock, "2x2");
+      if (defaultEnabledFor2x2 > 3) {
+        warnings.push(warn(
+          `renderHints["2x2"] hat kein Widget und ${defaultEnabledFor2x2} Default-Stats — wirkt als Stats-Dump (K3).`,
+          `2x2 soll EIN fokussiertes Widget sein (Gauge, Graph, Animation, Buttons), nicht eine grosse Stats-Liste.\n- Entweder widgetComponent + layout:"widget"/"dynamic" ergaenzen\n- Oder Stats auf showForSizes:["1x1","2x1"] beschraenken, sodass User mehrere kleinere Tiles stattdessen anlegen.`,
         ));
       }
     }
@@ -476,8 +570,24 @@ function validatePlugin(params: {
     //  AppConnection, only those keys are loaded from the saved row — any other required
     //  field will fail validation with "Missing required config fields: <key>".)
     if (isRequired && !CONNECTION_KEYS.has(key) && !isOAuth) {
+      // 38. Typo-Check: schlage den nahestliegenden CONNECTION_KEY vor
+      let typoHint: string | null = null;
+      let bestDist = 3;
+      let bestKey: string | null = null;
+      for (const ck of CONNECTION_KEYS) {
+        const d = levenshtein(key.toLowerCase(), ck.toLowerCase(), 2);
+        if (d > 0 && d < bestDist) {
+          bestDist = d;
+          bestKey = ck;
+        }
+      }
+      if (bestKey && bestDist <= 2) {
+        typoHint = `Meinst du "${bestKey}"? Distanz zu "${key}" = ${bestDist}. Ersetze \`key: "${key}"\` durch \`key: "${bestKey}"\` (Label darf frei bleiben).`;
+      }
       const credentialish = /^(api)?(secret|token|bearer|auth|key|password|pass|pwd)$/i.test(key);
-      const remap = credentialish
+      const remap = typoHint
+        ? typoHint
+        : credentialish
         ? `Benenne den Key um auf einen der CONNECTION_KEYS:\n  apiKey, accessToken, username, password\nz.B. \`{ key: "apiKey", label: "${key}", type: "password", required: true }\` (das Label kann frei bleiben).`
         : `Entweder den Key auf einen CONNECTION_KEY (apiUrl/apiKey/accessToken/username/password) abbilden, oder das Feld auf \`required: false\` setzen damit es als per-Tile Feature-Field behandelt wird.`;
       errors.push(err(
@@ -595,6 +705,19 @@ function validatePlugin(params: {
         }
       }
     }
+
+    // 37. checkNotifications sollte keine Tile-spezifischen Felder als
+    // Source-Identifier verwenden — NotificationSource existiert pro
+    // AppConnection, nicht pro Tile (K4).
+    if (hasCheckNotifications) {
+      const checkBody = extractFunctionBody(pluginCode, "checkNotifications");
+      if (checkBody && /\bconfig\s*\.\s*tileId\b/.test(checkBody)) {
+        warnings.push(warn(
+          "checkNotifications liest config.tileId — Notifications sind pro AppConnection gescoped, nicht pro Tile (K4).",
+          `Eine NotificationSource wird pro AppConnection angelegt (core/schema.prisma: NotificationSource.appConnectionId). Wenn mehrere Tiles dieselbe Connection teilen, teilen sie sich auch die Notification-Source.\nFuer Rate-Limiting/Dedupe nutze stattdessen:\n  - tag (bereits pro Rule-ID)\n  - connection-level Identifier wie config.apiUrl\n  - previousData vs currentData (zweites Argument von checkNotifications)`,
+        ));
+      }
+    }
   }
 
   // ── Widget Validation (merged from test_plugin_completeness) ────────
@@ -649,6 +772,125 @@ function extractFunctionBody(code: string, funcName: string): string | null {
   }
 
   return code.slice(afterSignature, end + 1);
+}
+
+/**
+ * Best-effort extraction of a top-level array body (e.g. statOptions: [ ... ]).
+ * Returns the text between the outer brackets (exclusive) or null.
+ */
+function extractArrayBlock(code: string, name: string): string | null {
+  const re = new RegExp(`${name}\\s*:\\s*\\[`);
+  const match = code.match(re);
+  if (!match) return null;
+  const start = match.index! + match[0].length - 1; // position of '['
+  let depth = 0;
+  for (let i = start; i < code.length; i++) {
+    if (code[i] === "[") depth++;
+    else if (code[i] === "]") {
+      depth--;
+      if (depth === 0) return code.slice(start + 1, i);
+    }
+  }
+  return null;
+}
+
+/**
+ * Counts statOptions entries with defaultEnabled:true whose showForSizes allows
+ * the given size (or where showForSizes is absent = allowed on every size).
+ */
+function countDefaultEnabledForSize(statOptionsBody: string, size: string): number {
+  let count = 0;
+  // Walk each top-level { ... } object inside the array
+  let depth = 0;
+  let blockStart = -1;
+  for (let i = 0; i < statOptionsBody.length; i++) {
+    const ch = statOptionsBody[i];
+    if (ch === "{") {
+      if (depth === 0) blockStart = i;
+      depth++;
+    } else if (ch === "}") {
+      depth--;
+      if (depth === 0 && blockStart !== -1) {
+        const block = statOptionsBody.slice(blockStart, i + 1);
+        const isDefault = /defaultEnabled\s*:\s*true/.test(block);
+        if (isDefault) {
+          const showMatch = block.match(/showForSizes\s*:\s*\[([^\]]*)\]/);
+          if (!showMatch) {
+            count++;
+          } else {
+            const sizes = [...showMatch[1].matchAll(/["'](\dx\d)["']/g)].map((m) => m[1]);
+            if (sizes.includes(size)) count++;
+          }
+        }
+        blockStart = -1;
+      }
+    }
+  }
+  return count;
+}
+
+/**
+ * Finds the first configField block whose key matches the given name.
+ * Returns the object body text (between { and }) or null.
+ */
+function findConfigField(code: string, key: string): string | null {
+  const blocks = extractConfigFieldBlocks(code);
+  for (const block of blocks) {
+    if (block.key === key) return block.body;
+  }
+  return null;
+}
+
+/**
+ * Extracts every top-level configField object block from the `configFields` array.
+ * Returns an array of { key, body } where body is the raw object text (without
+ * surrounding braces).
+ */
+function extractConfigFieldBlocks(code: string): Array<{ key: string; body: string }> {
+  const arrayBody = extractArrayBlock(code, "configFields");
+  if (!arrayBody) return [];
+  const out: Array<{ key: string; body: string }> = [];
+  let depth = 0;
+  let blockStart = -1;
+  for (let i = 0; i < arrayBody.length; i++) {
+    const ch = arrayBody[i];
+    if (ch === "{") {
+      if (depth === 0) blockStart = i;
+      depth++;
+    } else if (ch === "}") {
+      depth--;
+      if (depth === 0 && blockStart !== -1) {
+        const body = arrayBody.slice(blockStart + 1, i);
+        const keyMatch = body.match(/\bkey\s*:\s*["']([^"']+)["']/);
+        if (keyMatch) out.push({ key: keyMatch[1], body });
+        blockStart = -1;
+      }
+    }
+  }
+  return out;
+}
+
+/**
+ * Damerau-Levenshtein distance (capped at maxDist for early-exit efficiency).
+ */
+function levenshtein(a: string, b: string, maxDist = 3): number {
+  if (a === b) return 0;
+  if (Math.abs(a.length - b.length) > maxDist) return maxDist + 1;
+  const prev = new Array<number>(b.length + 1);
+  const curr = new Array<number>(b.length + 1);
+  for (let j = 0; j <= b.length; j++) prev[j] = j;
+  for (let i = 1; i <= a.length; i++) {
+    curr[0] = i;
+    let rowMin = curr[0];
+    for (let j = 1; j <= b.length; j++) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      curr[j] = Math.min(curr[j - 1] + 1, prev[j] + 1, prev[j - 1] + cost);
+      if (curr[j] < rowMin) rowMin = curr[j];
+    }
+    if (rowMin > maxDist) return maxDist + 1;
+    for (let j = 0; j <= b.length; j++) prev[j] = curr[j];
+  }
+  return prev[b.length];
 }
 
 // ─── validate_stats_output ────────────────────────────────────────────────

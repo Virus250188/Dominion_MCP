@@ -211,4 +211,40 @@ export function registerKnowledgeTools(server: McpServer): void {
       return success(FRAMEWORK.deployment);
     },
   );
+
+  // ── get_connection_flow_spec ─────────────────────────────────────────
+  server.tool(
+    "get_connection_flow_spec",
+    "[Phase 1: Lernen] **PFLICHT vor Scaffold.** Erklaert die Trennung von AppConnection (CONNECTION_KEYS-Whitelist) und Tile.enhancedConfig (per-Tile). Beschreibt den Connection-First-Gate (erste Tile: Test vor Options), Re-Use beim zweiten Tile, Merge-Reihenfolge in fetchStats, haeufige Fallstricke (apiSecret als required, falsche Key-Namen). Behebt die Luecke, die Validate-Rule 31+38 pflegt.",
+    async () => {
+      return success(PATTERNS.connectionFlowSpec);
+    },
+  );
+
+  // ── get_2x1_modus_pattern ────────────────────────────────────────────
+  server.tool(
+    "get_2x1_modus_pattern",
+    "[Phase 2: Entwerfen] **PFLICHT wenn 2x1 mit Widget angeboten wird.** Zeigt das displayMode-Select-Pattern fuer den expliziten Modus-Schalter (Stats vs Mini-Widget), showWhen-Gating fuer Folge-Felder, layout:'dynamic' in renderHints. Verhindert Validate-Rule 32/33 Errors.",
+    async () => {
+      return success(PATTERNS.tile2x1ModusPattern);
+    },
+  );
+
+  // ── get_tile_config_vs_global_storage ────────────────────────────────
+  server.tool(
+    "get_tile_config_vs_global_storage",
+    "[Phase 2: Entwerfen] Klassifizierungs-Leitfaden: welches configField gehoert in AppConnection (Credentials, CONNECTION_KEYS) und welches in Tile.enhancedConfig (Feature-Fields, required:false). Enthaelt Entscheidungs-Checkliste, Merge-Verhalten in fetchStats und Code-Skelett mit Kommentaren.",
+    async () => {
+      return success(PATTERNS.tileConfigVsGlobalStorage);
+    },
+  );
+
+  // ── get_plugin_version_strategy ──────────────────────────────────────
+  server.tool(
+    "get_plugin_version_strategy",
+    "[Phase 6: Paketieren] Semver-Bump-Decision-Tree (patch/minor/major), Install-vs-Patch-Verhalten im Dashboard, Re-Upload-Kollisions-Regeln, Migrations-Pattern fuer Breaking Changes, typische Version-Fehler. Call vor jedem create_plugin_zip.",
+    async () => {
+      return success(PATTERNS.pluginVersionStrategy);
+    },
+  );
 }

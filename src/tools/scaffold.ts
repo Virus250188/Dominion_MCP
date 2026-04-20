@@ -29,6 +29,9 @@ interface ConfigFieldInput {
   placeholder?: string;
   description?: string;
   showForSizes?: string[];
+  options?: Array<{ value: string; label: string }>;
+  defaultValue?: string;
+  showWhen?: Record<string, string | string[]>;
 }
 
 interface StatOptionInput {
@@ -47,13 +50,18 @@ function generateRenderHints(
   const hints: string[] = [];
 
   if (supportedSizes.includes("1x1")) {
+    // K3: 1x1 darf kein Widget haben — maximal 3 Werte/Status
     hints.push(`    "1x1": { maxStats: 3, layout: "compact" }`);
   }
 
   if (supportedSizes.includes("2x1")) {
     if (hasWidget) {
+      // K3: 2x1 mit Widget nutzt "dynamic" — Dashboard switcht zwischen
+      // detailed/widget-Layout je nach enhancedConfig.displayMode.
+      // Dazu wird automatisch ein displayMode-Select-configField emittiert
+      // (siehe generatePluginCode).
       hints.push(
-        `    "2x1": { maxStats: 6, layout: "widget", widgetComponent: "${pascalName}Widget" }`,
+        `    "2x1": { maxStats: 6, layout: "dynamic", widgetComponent: "${pascalName}Widget" }`,
       );
     } else {
       hints.push(`    "2x1": { maxStats: 6, layout: "detailed" }`);
@@ -62,6 +70,7 @@ function generateRenderHints(
 
   if (supportedSizes.includes("2x2")) {
     if (hasWidget) {
+      // K3: 2x2 ist EIN fokussiertes Widget — weniger maxStats, klare Focus
       hints.push(
         `    "2x2": { maxStats: 4, layout: "widget", widgetComponent: "${pascalName}Widget" }`,
       );
@@ -71,6 +80,39 @@ function generateRenderHints(
   }
 
   return hints.join(",\n");
+}
+
+/**
+ * Injects the displayMode-select configField for 2x1+widget plugins if the
+ * caller did not provide one. K3 (Rule 32) requires this field for the
+ * Stats-vs-MiniWidget switch. Also sets showWhen on any existing 2x1-only
+ * feature fields to default them to the widget branch (developer can override).
+ */
+function ensureDisplayModeField(
+  fields: ConfigFieldInput[],
+  supportedSizes: string[],
+  hasWidget: boolean,
+): ConfigFieldInput[] {
+  if (!supportedSizes.includes("2x1") || !hasWidget) return fields;
+  const hasDisplayMode = fields.some(
+    (f) => f.key === "displayMode" && f.type === "select",
+  );
+  if (hasDisplayMode) return fields;
+  const displayModeField: ConfigFieldInput = {
+    key: "displayMode",
+    label: "2x1 Anzeige",
+    type: "select",
+    required: false,
+    description:
+      "Stats-Modus zeigt bis zu 6 Werte. Mini-Widget-Modus rendert die Widget-Komponente kompakt.",
+    showForSizes: ["2x1"],
+    options: [
+      { value: "stats", label: "Werte (wie 1x1 aber mehr)" },
+      { value: "widget", label: "Mini-Widget" },
+    ],
+    defaultValue: "stats",
+  };
+  return [...fields, displayModeField];
 }
 
 function generateConfigFields(fields: ConfigFieldInput[]): string {
@@ -87,6 +129,26 @@ function generateConfigFields(fields: ConfigFieldInput[]): string {
       if (f.description) lines.push(`      description: "${sanitize(f.description)}",`);
       if (f.showForSizes && f.showForSizes.length > 0) {
         lines.push(`      showForSizes: [${f.showForSizes.map((s) => `"${s}"`).join(", ")}],`);
+      }
+      if (f.options && f.options.length > 0) {
+        const opts = f.options
+          .map((o) => `{ value: "${sanitize(o.value)}", label: "${sanitize(o.label)}" }`)
+          .join(", ");
+        lines.push(`      options: [${opts}],`);
+      }
+      if (f.defaultValue !== undefined) {
+        lines.push(`      defaultValue: "${sanitize(f.defaultValue)}",`);
+      }
+      if (f.showWhen) {
+        const pairs = Object.entries(f.showWhen)
+          .map(([k, v]) => {
+            if (Array.isArray(v)) {
+              return `"${sanitize(k)}": [${v.map((x) => `"${sanitize(x)}"`).join(", ")}]`;
+            }
+            return `"${sanitize(k)}": "${sanitize(v)}"`;
+          })
+          .join(", ");
+        lines.push(`      showWhen: { ${pairs} },`);
       }
       lines.push(`    }`);
       return lines.join("\n");
@@ -153,7 +215,6 @@ function generatePluginCode(params: {
     name,
     description,
     category,
-    configFields,
     statOptions,
     supportedSizes,
     hasCrawler,
@@ -161,6 +222,14 @@ function generatePluginCode(params: {
     hasOAuth,
     hasNotifications,
   } = params;
+
+  // K3 Auto-Emit: 2x1+hasWidget braucht einen displayMode-Select (Rule 32).
+  // Wird automatisch ergaenzt wenn der Aufrufer keinen eigenen liefert.
+  const configFields = ensureDisplayModeField(
+    params.configFields,
+    supportedSizes,
+    hasWidget,
+  );
 
   const pascalName = toPascalCase(name.replace(/\s+/g, ""));
 

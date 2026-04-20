@@ -818,6 +818,17 @@ m) Soll der Service Benachrichtigungen ausloesen? (Service down, Disk voll,
    → Falls ja: \`get_notification_spec\` aufrufen UND notificationRules-Katalog
      gemeinsam mit dem User definieren BEVOR codiert wird
 
+n) **2x1-Modus-Entscheidung (K3):** Falls 2x1 angeboten wird UND Widget:
+   → Rufe \`get_2x1_modus_pattern\` auf BEVOR du codierst. 2x1 mit Widget
+     braucht zwingend einen displayMode-Select-Schalter. Das Scaffold
+     emittiert ihn automatisch — fehlt er, schlaegt validate_plugin Rule 32 fehl.
+
+o) **Connection-Scope-Entscheidung (K2):** Falls du eigene configFields
+   ausserhalb apiUrl/apiKey ueberlegst:
+   → Rufe \`get_tile_config_vs_global_storage\` auf. Pro Feld klaeren:
+     gehoert es auf AppConnection (global, required) oder Tile (per-Tile, optional)?
+     Falsch klassifiziert = Bug bei Tile-Reuse (Rule 31+38).
+
 ### Phase D: Selbst-Pruefung (frage DICH SELBST)
 m) Habe ich WIRKLICH alles was ich brauche?
 n) Kenne ich die API-Response-Struktur genau genug um
@@ -829,9 +840,12 @@ o) Gibt es noch offene Rueckfragen an den User?
 die nicht funktioniert.
 
 ## Schritt 4: Specs lesen
-Rufe auf (je nach Bedarf):
+Rufe auf (je nach Bedarf — **K1-K5 PFLICHT-Tools sind fett markiert**):
 - \`get_data_contracts\` → PluginStats, StatItem, ConfigField Interfaces, CONNECTION_KEYS-Whitelist, crawlEntities ↔ statOptions Exklusivitaet
+- **\`get_connection_flow_spec\`** → **PFLICHT.** Connection-First-Gate (K1), AppConnection vs Tile-Scope (K2), Merge-Reihenfolge in fetchStats. Ohne dieses Tool werden Rule 31+38 verletzt.
+- **\`get_tile_config_vs_global_storage\`** → **PFLICHT.** Klassifizierungs-Checkliste pro configField. Verhindert required-Felder ausserhalb der CONNECTION_KEYS-Whitelist.
 - \`get_tile_size_spec\` (fuer jede gewuenschte Groesse) → Pixel-Dimensionen, Limits
+- **\`get_2x1_modus_pattern\`** → **PFLICHT wenn 2x1 + Widget**. displayMode-Select, showWhen-Gating, layout:"dynamic". Rule 32+33 bauen darauf.
 - \`get_widget_contract\` (falls Widget) → WidgetProps, WidgetHeader, Shared Components
 - \`get_entity_crawler_spec\` (falls Crawler) → CrawlEntityGroup Interface. **WICHTIG:** crawlEntities ersetzt den statOptions-Picker UEBER ALLE Tile-Groessen — entscheide bewusst pro Plugin.
 - \`get_notification_spec\` (falls Plugin Zustands-Aenderungen meldet) → **PFLICHT** wenn das Plugin "Service down", "Disk voll", "Container gestoppt" o.ae. erkennen soll. Erklaert notificationRules-Katalog, tag→Rule-ID Filter, checkNotifications, expliziten User-Opt-in via TileDialog. **Wenn der User nach Benachrichtigungen, Alerts oder Status-Aenderungen fragt → JETZT rufen, nicht spaeter raten.**
@@ -859,7 +873,7 @@ Falls Widget gewuenscht: Rufe \`scaffold_widget\` auf.
 
 ## Schritt 8: Validieren
 Rufe auf:
-- \`validate_plugin\` → Prueft 30+ Regeln (Code, Manifest, Widget, Notifications, CONNECTION_KEYS) mit Fix-Vorschlaegen
+- \`validate_plugin\` → Prueft 38 Regeln (Code, Manifest, Widget, Notifications, CONNECTION_KEYS, Tile-Size-Semantik K3, Modus-Schalter, Typo-Hints) mit Fix-Vorschlaegen. **Rule 32-38 sind die K1-K5-Enforcement-Rules** — siehe \`get_connection_flow_spec\` und \`get_2x1_modus_pattern\` wenn Rules 31-33 feuern.
 - \`test_typescript_syntax\` → Prueft Klammern, Imports, console.log
 
 ## Schritt 9: Preview (empfohlen)
@@ -874,6 +888,10 @@ Rufe \`generate_readme\` auf mit den Plugin-Daten (Name, Category, Features, Con
 → README als Datei speichern
 
 ## Schritt 11: ZIP erstellen und ausliefern
+**Vorher: Version-Strategie pruefen.** Rufe \`get_plugin_version_strategy\` auf
+wenn unklar ob patch/minor/major. Re-Upload mit identischer Version wird
+vom Dashboard zwar akzeptiert, zeigt aber keine Aenderung — immer hochzaehlen.
+
 Rufe \`create_plugin_zip\` auf mit:
 - pluginId, manifestJson, pluginCode
 - Optional: widgetCode, widgetFileName, typesCode

@@ -2842,4 +2842,301 @@ Das Tool \`generate_readme\` erzeugt diese automatisch.
 - {Loesung}
 \`\`\`
 `,
+
+  // ─── Wave 1 (K1-K5 Enforcement Docs) ──────────────────────────────────
+  // Diese Patterns werden von den neuen Knowledge-Tools
+  // (get_connection_flow_spec, get_2x1_modus_pattern,
+  //  get_tile_config_vs_global_storage, get_plugin_version_strategy)
+  // an die KI ausgeliefert. Sie fuellen die Luecken die Validate-Rules
+  // 32-38 aufdecken, und geben der KI einen klaren Bauplan.
+
+  connectionFlowSpec: `
+# Connection-Flow-Spec (K1 + K2)
+
+Das Dashboard trennt Plugin-Config strikt in zwei Scopes:
+
+## 1. AppConnection (global, pro App)
+Gespeichert EINMAL pro Verbindung. Geteilt ueber alle Tiles derselben App.
+Gehoert auf diesen Layer:
+- **CONNECTION_KEYS-Whitelist:** \`apiUrl\`, \`apiKey\`, \`accessToken\`, \`username\`, \`password\`
+- OAuth-Felder (type: "oauth")
+
+**Hardcoded im Dashboard:** core/src/lib/actions/tiles.ts:43
+Ein configField mit \`required: true\` UND einem Key ausserhalb dieser Liste
+bricht beim Anlegen der zweiten Tile gegen dieselbe Connection ab
+(Fehlermeldung: "Missing required config fields: <key>").
+
+## 2. Tile.enhancedConfig (per Tile)
+Gespeichert pro Tile-Instanz. Jedes Tile kann eigene Werte haben.
+Gehoert hierher:
+- \`visibleStats: string[]\` — welche Stats sichtbar
+- \`displayMode: "stats" | "widget"\` — 2x1-Modus (siehe get_2x1_modus_pattern)
+- \`selectedEntities\` — Entity-Picker-Auswahl
+- Alle anderen Feature-Felder (required: false, optional showForSizes)
+
+## Connection-First-Gate (K1)
+Wenn ein User ein **erstes** Tile einer App anlegt und KEINE existierende
+AppConnection vorhanden ist:
+
+1. TileDialog zeigt nur die **CONNECTION_KEYS** + OAuth-Felder
+2. Speichern-Button disabled bis \`testConnection()\` ok: true liefert
+3. ERST nach Success: Size-Auswahl + Feature-Fields werden sichtbar
+4. Entity-Crawler (falls vorhanden) laeuft automatisch nach Test
+5. Speichern legt AppConnection an UND erstellt Tile in einem Schritt
+
+Bei **zweitem oder weiterem** Tile derselben App:
+1. TileDialog zeigt Dropdown "Bestehende Verbindung waehlen"
+2. Nach Auswahl: Connection-Felder werden aus AppConnection geladen, unsichtbar
+3. Feature-Fields sofort sichtbar — kein erneuter testConnection-Aufruf
+
+## Merge-Reihenfolge in fetchStats
+Wenn fetchStats(config) laeuft, ist \`config\` ein **gemergter** Record:
+\`\`\`
+config = { ...appConnection.config, ...tile.enhancedConfig }
+\`\`\`
+Bedeutet: Tile-Settings ueberschreiben Connection-Settings. In der Praxis
+kommt das selten vor (verschiedene Keys), aber es ist der Contract.
+
+## Haeufige Fallstricke
+- \`apiSecret\` als required-Field: bricht Tile-Reuse (Validate-Rule 31).
+  Remap auf \`accessToken\` oder \`password\`, oder required:false setzen.
+- Credentials als Feature-Fields (required:false): User sieht sie nach
+  Connection-Test und wundert sich, warum er sie nochmal eingeben soll.
+  → Immer als CONNECTION_KEY-required deklarieren.
+- testConnection fehlt: User bleibt im Speichern-disabled-Zustand haengen.
+
+## Weiterfuehrende Tools
+- \`get_tile_config_vs_global_storage\` — Tabellen-Form fuer Quick-Reference
+- \`get_2x1_modus_pattern\` — displayMode-Switch implementieren
+`,
+
+  tile2x1ModusPattern: `
+# 2x1 Modus-Schalter (K3)
+
+2x1-Tiles haben zwei semantische Varianten. Der User MUSS waehlen koennen —
+nicht der Entwickler hardcoded.
+
+## Variante A: Stats-Modus (Werte)
+Wie eine aufgewertete 1x1 — zeigt bis zu 6 Stats statt 3. Kein Widget.
+Passend fuer: Erweiterte Zahlen-Sicht, Tabellen-Artige Uebersichten.
+
+## Variante B: Widget-Modus (Mini-Widget)
+Reduzierte Version des 2x2-Widgets. Passt in 2x1-Platz. Eine Kern-Funktion.
+Passend fuer: Kompakte Gauge, Karussell-Preview, Zwei-Buttons-Panel.
+
+## Implementation: displayMode-Select
+
+### 1. configField hinzufuegen
+\`\`\`ts
+{
+  key: "displayMode",
+  label: "Anzeige-Modus",
+  type: "select",
+  options: [
+    { value: "stats", label: "Werte (wie 1x1)" },
+    { value: "widget", label: "Mini-Widget" },
+  ],
+  defaultValue: "stats",
+  showForSizes: ["2x1"],   // nur auf 2x1 anbieten
+  required: false,          // per-Tile, nicht Connection-Level
+}
+\`\`\`
+
+### 2. renderHints auf "dynamic" setzen
+\`\`\`ts
+renderHints: {
+  "2x1": {
+    maxStats: 6,
+    layout: "dynamic",        // Dashboard switcht zwischen detailed/widget
+    widgetComponent: "MyMiniWidget",
+  },
+}
+\`\`\`
+
+### 3. Feature-Felder modus-spezifisch gating
+Felder die nur im Widget-Modus Sinn machen (z.B. Karussell-Geschwindigkeit):
+\`\`\`ts
+{
+  key: "carouselSpeed",
+  label: "Karussell-Geschwindigkeit (ms)",
+  type: "number",
+  showForSizes: ["2x1"],
+  showWhen: { displayMode: "widget" },   // NUR im Widget-Modus
+}
+\`\`\`
+
+Felder die nur im Stats-Modus Sinn machen (z.B. zusaetzliche Stat-Gruppen):
+\`\`\`ts
+{
+  key: "statGroup",
+  label: "Stat-Gruppe",
+  type: "select",
+  options: [...],
+  showForSizes: ["2x1"],
+  showWhen: { displayMode: "stats" },
+}
+\`\`\`
+
+### 4. Widget-Komponente muss mit Mini-Platz umgehen
+Die widgetComponent wird bei 2x1 in einem 336x160 Container gerendert
+(2x2 haette 336x320). Die Komponente sollte \`size\`-Prop pruefen und
+in 2x1-Mode kompakter rendern (weniger Details, kleinere Schrift).
+
+## Validierung (Rule 32)
+Wenn renderHints["2x1"] layout "widget" oder "dynamic" oder widgetComponent
+hat, aber KEIN configField mit:
+- key: "displayMode"
+- type: "select"
+- showForSizes enthaelt "2x1"
+
+… dann schlaegt validate_plugin mit Error fehl. Der User kann sonst nicht
+zwischen Stats und Widget umschalten.
+
+## Anti-Pattern: Zwei getrennte configField-Bloecke
+Frueher war der Workaround: je ein Stats-Feld-Set und ein Widget-Feld-Set,
+beide mit showForSizes:["2x1"]. Problem: beide gleichzeitig sichtbar, UX-Bruch.
+Seit Core-Support fuer \`showWhen\` (Branch feature/configfield-showwhen-dynamic-layout)
+ist das obsolet — immer displayMode + showWhen nutzen.
+
+## Voll-Beispiel
+Siehe get_hello_world_example fuer ein minimales 2x1+Widget-Plugin mit Modus-Schalter.
+`,
+
+  tileConfigVsGlobalStorage: `
+# Tile-Config vs Global Storage (K2)
+
+Ein Plugin hat ZWEI Config-Scopes. Die KI muss pro configField bewusst
+entscheiden, zu welchem Scope es gehoert. Falsch klassifiziert = Bug.
+
+## Tabelle
+
+| Scope | Wo gespeichert | Schluessel-Typ | required | Geteilt |
+|-------|----------------|----------------|----------|---------|
+| **AppConnection** | \`AppConnection.config\` (pro User+App) | CONNECTION_KEYS-Whitelist | **true** | Ja, ueber alle Tiles derselben App |
+| **Tile.enhancedConfig** | \`Tile.enhancedConfig\` (pro Tile) | beliebige Keys | **false** | Nein, pro Tile eigene Werte |
+
+## CONNECTION_KEYS (hardcoded in core/src/lib/actions/tiles.ts:43)
+- \`apiUrl\` — Basis-URL des Services (z.B. https://myapp.local:8080)
+- \`apiKey\` — generischer API-Key / Bearer-Token
+- \`accessToken\` — OAuth-Access-Token (fuer OAuth-Flows)
+- \`username\` — Basic-Auth oder Service-User
+- \`password\` — Basic-Auth-Passwort oder API-Secret
+
+Plus: Felder mit \`type: "oauth"\` werden automatisch als Connection behandelt.
+
+## Regeln
+1. **Credentials IMMER als CONNECTION_KEY:** Benutze exakt einen der 5 Namen.
+   Eigene Namen (\`apiSecret\`, \`token\`, \`serverKey\`) = Bug bei Tile-Reuse.
+
+2. **Feature-Fields IMMER required:false:** Alles was nicht in CONNECTION_KEYS
+   ist UND required:true steht, bricht die zweite Tile.
+
+3. **showForSizes ist per-Tile:** Nur sinnvoll fuer Feature-Fields. Felder mit
+   showForSizes erscheinen erst NACH erfolgreichem testConnection.
+
+4. **showWhen ist per-Tile:** Conditional zwischen Feature-Feldern.
+   (Z.B. displayMode-abhaengige Folge-Felder — siehe get_2x1_modus_pattern.)
+
+## Klassifizierungs-Checkliste
+Fuer jedes configField frage dich:
+- Ist es ein Credential / Service-Address? → CONNECTION_KEY, required:true
+- Ist es Entity-Auswahl / Anzeige-Option / Layout-Wahl? → Feature-Field, required:false
+- Kann der User mehrere Tiles mit **unterschiedlichen** Werten hiervon haben? → Feature-Field
+- Muss es fuer die erste Tile vorhanden sein bevor Test laeuft? → CONNECTION_KEY
+
+## Typo-Schutz
+validate_plugin Rule 38 erkennt Typos wie:
+- \`apiURL\` (falsche Schreibweise) → schlaegt \`apiUrl\` vor (Distanz 1)
+- \`apiSecret\` → schlaegt \`accessToken\` oder \`password\` vor
+- \`userName\` → schlaegt \`username\` vor
+
+## Merge-Verhalten in fetchStats
+\`\`\`
+config = { ...appConnection.config, ...tile.enhancedConfig }
+\`\`\`
+Tile-Werte ueberschreiben Connection-Werte. In der Praxis:
+- apiUrl kommt aus Connection
+- visibleStats kommt aus Tile
+- Kein Key-Konflikt = alles klar
+
+## Kurzversion fuer Code-Kommentare
+\`\`\`ts
+configFields: [
+  // Connection-Scope (gated, vor Test sichtbar, required)
+  { key: "apiUrl", type: "url", required: true },
+  { key: "apiKey", type: "password", required: true },
+
+  // Tile-Scope (nach Test sichtbar, optional, pro-Tile)
+  { key: "displayMode", type: "select", required: false, showForSizes: ["2x1"] },
+  { key: "refreshRate", type: "number", required: false },
+],
+\`\`\`
+`,
+
+  pluginVersionStrategy: `
+# Plugin-Version-Strategie (K5)
+
+Jedes Plugin braucht einen semver im \`plugin.manifest.json\`. Das Dashboard
+erkennt Version und erlaubt Upgrade (Install → Patch-Flow).
+
+## Semver-Bump-Decision-Tree
+
+| Aenderung | Bump | Beispiel |
+|-----------|------|----------|
+| Bugfix in fetchStats / Rendering | patch (1.0.0 → 1.0.1) | Timeout korrigiert |
+| Neue optionale Config-Option | patch | neuer Farb-Picker |
+| Neuer Stat-Option (defaultEnabled:false) | patch | "CPU Temperatur" dazu |
+| Neue Size supported | minor (1.0.0 → 1.1.0) | 2x2 ergaenzt |
+| Neues Widget / Dashboard-Feature | minor | Graph-Widget |
+| Neue notificationRules-Eintraege | minor | "Service offline" Rule |
+| CONNECTION_KEY-Struktur geaendert | **major** (1.0.0 → 2.0.0) | apiKey → accessToken |
+| configFields required geaendert | **major** | bricht bestehende Tiles |
+| Entfernung einer statOption | **major** | bestehende visibleStats invalid |
+
+## Install vs Patch
+Das Dashboard (core/src/app/api/plugins/upload/route.ts:88-111) prueft:
+- Existiert ein Ordner mit demselben manifest.id?
+  - NEIN → action: "install"
+  - JA → action: "update", previousVersion wird geloggt
+- Old-Dir wird geloescht, neues wird extrahiert
+
+## Re-Upload gleicher Version
+Dashboard ERLAUBT es aktuell (keine Version-Collision-Check). Der MCP sollte
+vorne davor schuetzen:
+- Tool \`check_plugin_version_status\` (Wave 2) vergleicht manifest.version
+  gegen installierte Version
+- Wenn identisch → Error mit Bump-Vorschlag
+- Wenn niedriger → Error "Downgrade nicht unterstuetzt"
+- Wenn hoeher → OK, Install/Patch
+
+## manifest-Felder fuer Version-Sanity
+\`\`\`json
+{
+  "id": "my-plugin",
+  "version": "1.2.3",
+  "minDashboardVersion": "1.4.0",   // optional aber empfohlen
+  "changelog": [                     // optional aber hilfreich
+    { "version": "1.2.3", "changes": ["Bugfix: timeout in fetchStats"] }
+  ]
+}
+\`\`\`
+
+## Breaking Changes: Migration
+Wenn eine neue Major-Version configField-Keys umbenennt, wirst du existierende
+Tile-Instanzen nicht automatisch migrieren. Empfehlung:
+1. Alte Keys als required:false parallel halten (1 Release lang)
+2. In fetchStats Fallback: \`config.apiUrl ?? config.baseUrl\`
+3. Changelog-Eintrag mit Migrations-Hinweis
+4. Bei naechstem Major alte Keys entfernen
+
+## Versionierung des MCP selbst
+Der Dominion MCP Server hat eigene Version. Nicht mit Plugin-Version verwechseln.
+minDashboardVersion im Plugin bezieht sich auf das Dashboard, nicht auf den MCP.
+
+## Typische Fehler
+- Plugin bleibt auf "1.0.0" bei jedem Re-Build → Dashboard installiert leise
+  die alte Version nochmal, keine Aenderung sichtbar.
+- Version zurueckdrehen weil "gefuehlt war es zuletzt 1.3.0" → Semver-Bruch.
+- Major-Bump ohne Migration-Path → bestehende Tiles zeigen "Missing required config fields".
+`,
 } as const;
