@@ -1,0 +1,26 @@
+{
+  "name": "dominion-enhanced-mcp",
+  "version": "3.1.0",
+  "description": "MCP server that teaches AI agents to build Dominion Dashboard Enhanced Apps (plugin format v2 — runtime plugin.json + optional sandboxed adapter.js). Synced to Dominion 2.1.0-beta.",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "dominion-mcp": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsc --watch",
+    "smoke": "node scripts/smoke-test.mjs"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.1",
+    "adm-zip": "^0.5.16",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/adm-zip": "^0.5.7",
+    "@types/node": "^22.15.3",
+    "typescript": "^5.8.3"
+  }
+}
